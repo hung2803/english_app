@@ -1,0 +1,30 @@
+name = "english-app"
+main = "worker/index.ts"
+compatibility_date = "2025-09-01"
+
+[assets]
+directory = "./dist"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "english-app"
+# Chạy `npx wrangler d1 create english-app` rồi dán database_id vào đây
+database_id = "bf563b64-d664-476d-9b7b-a4a1247d0711"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "FILES"
+# Chạy `npx wrangler r2 bucket create english-app-files` một lần (local dev tự giả lập, không cần tạo)
+bucket_name = "english-app-files"
+
+[triggers]
+# Mỗi 10 phút: nhắc học (nếu đúng giờ), tạo lại đề xuất tuần khi AI lỗi, gửi lại email chưa gửi được
+crons = ["*/10 * * * *"]
+
+[vars]
+GEMINI_MODEL = "gemini-3.5-flash-lite"
+
+# Secrets (không commit): GEMINI_API_KEY, APP_PASSWORD, SESSION_SECRET
+# Local: đặt trong .dev.vars | Production: npx wrangler secret put <NAME>

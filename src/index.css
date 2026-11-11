@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+@layer base {
+  body { @apply bg-slate-50 text-slate-800 antialiased; }
+  button { cursor: pointer; }
+  button:disabled { cursor: not-allowed; }
+
+}
+
+/* Keep mobile form text at 16px so iOS Safari does not zoom on focus.
+   This rule sits outside Tailwind's layers so text-xs/text-sm utilities cannot override it. */
+@media (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="button"]):not([type="submit"]):not([type="reset"]),
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}

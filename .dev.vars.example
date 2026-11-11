@@ -1,0 +1,11 @@
+# Sao chép thành .dev.vars (hoặc chạy `npm run secrets:init` để tự tạo khóa sinh được).
+GEMINI_API_KEY=
+APP_PASSWORD=
+SESSION_SECRET=
+RESEND_API_KEY=
+EMAIL_FROM=English Coach <onboarding@resend.dev>
+EMAIL_TO=
+VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=
+VAPID_SUBJECT=mailto:you@example.com
+APP_URL=http://localhost:5173
