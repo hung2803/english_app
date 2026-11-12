@@ -31,6 +31,11 @@ GEMINI_MODEL = "gemini-3.5-flash-lite"
 # Secrets (không commit): GEMINI_API_KEY, APP_PASSWORD, SESSION_SECRET
 # Local: đặt trong .dev.vars | Production: npx wrangler secret put <NAME>
 
+# Google chặn Gemini API với yêu cầu đến từ một số vùng (vd Hong Kong, nơi Cloudflare hay chạy Worker cho người dùng ở Việt Nam):
+# "User location is not supported for the API use". Đặt Worker chạy gần máy chủ Google (Mỹ) để yêu cầu AI đi ra từ vùng được hỗ trợ.
+[placement]
+hostname = "generativelanguage.googleapis.com"
+
 # Lưu log của Worker trên dashboard (Workers > english-app > Logs) để xem lỗi AI trên production
 [observability]
 enabled = true
