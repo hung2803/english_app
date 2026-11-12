@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import app from './index'
 import { makeToken } from './auth'
 import { todayVN } from './dates'
@@ -101,19 +101,19 @@ describe('normalizeLesson', () => {
   })
   it('đoạn trích từ nguồn bị cắt ngắn (không chép lại nội dung gốc); bài AI tự viết được dài hơn', () => {
     expect(normalizeLesson(good({ excerpt: 'x'.repeat(5000) }), SRC).excerpt).toHaveLength(600)
-    expect(normalizeLesson(good({ excerpt: 'x'.repeat(5000) }), { type: 'ai', title: 'AI', ai_written: true }).excerpt).toHaveLength(1500)
+    expect(normalizeLesson(good({ excerpt: 'x'.repeat(5000) }), { type: 'ai', title: 'AI', ai_written: true }).excerpt).toHaveLength(3000)
   })
-  it('bỏ từ vựng trùng (không phân biệt hoa thường), thiếu nghĩa; tối đa 8 từ và 2 điểm ngữ pháp', () => {
+  it('bỏ từ vựng trùng (không phân biệt hoa thường), thiếu nghĩa; tối đa 12 từ và 3 điểm ngữ pháp', () => {
     const vocab = [
       { word: 'Order', meaning_vi: 'a' }, { word: 'order', meaning_vi: 'b' }, { word: 'x', meaning_vi: '' }, { word: '', meaning_vi: 'c' },
       ...Array.from({ length: 12 }, (_, i) => ({ word: 'w' + i, meaning_vi: 'm' })),
     ]
     const grammar = Array.from({ length: 5 }, (_, i) => ({ point: 'p' + i, explanation_vi: 'e' }))
     const l = normalizeLesson(good({ vocab, grammar }), SRC)
-    expect(l.vocab).toHaveLength(8)
+    expect(l.vocab).toHaveLength(12)
     expect(l.vocab.filter((v) => v.word.toLowerCase() === 'order')).toHaveLength(1)
     expect(l.vocab[0].meaning_vi).toBe('a')
-    expect(l.grammar).toHaveLength(2)
+    expect(l.grammar).toHaveLength(3)
   })
   it('thiếu phần cốt lõi → AiError (để thử lại)', () => {
     const bad = [
@@ -142,7 +142,7 @@ describe('buildLessonPrompt', () => {
   it('AI tự viết: yêu cầu bài đọc gốc 120–180 từ theo mức', () => {
     const p = buildLessonPrompt({ ...ctx, chosen: null }, { kind: 'ai' })
     expect(p).toContain('OWN original English reading')
-    expect(p).toContain('120-180 words')
+    expect(p).toContain('250-350 words')
     expect(p).toContain('CEFR A2')
   })
 })

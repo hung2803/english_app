@@ -9,7 +9,7 @@
 
 /* Keep mobile form text at 16px so iOS Safari does not zoom on focus.
    This rule sits outside Tailwind's layers so text-xs/text-sm utilities cannot override it. */
-@media (max-width: 767px) {
+@media (max-width: 767px), (pointer: coarse) {
   input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="button"]):not([type="submit"]):not([type="reset"]),
   textarea,
   select {

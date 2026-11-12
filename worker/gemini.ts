@@ -1,5 +1,7 @@
 import type { Env } from './env'
 import { AiError } from './errors'
+import { currentModel } from './ai-model'
+import { recordUsage } from './ai-usage'
 
 export type Part =
   | { text: string }
@@ -21,13 +23,14 @@ export interface GeminiOpts {
 interface GeminiResponse {
   candidates?: { finishReason?: string; content?: { parts?: { text?: string }[] } }[]
   promptFeedback?: { blockReason?: string }
+  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number; totalTokenCount?: number }
 }
 
 /** Gọi Gemini, trả về văn bản. Mọi lỗi đều thành AiError. */
 export async function gemini(env: Env, parts: Part[], opts: GeminiOpts = {}): Promise<string> {
   if (!env.GEMINI_API_KEY) throw new AiError('config', 'Thiếu GEMINI_API_KEY')
 
-  const model = env.GEMINI_MODEL || 'gemini-3.5-flash-lite'
+  const model = await currentModel(env) // người dùng chọn ở trang chủ, hoặc GEMINI_MODEL
   const generationConfig: Record<string, unknown> = { temperature: 0.7 }
   // responseMimeType json không dùng chung được với công cụ google_search
   if (!opts.tools && !opts.plain) generationConfig.responseMimeType = 'application/json'
@@ -51,17 +54,25 @@ export async function gemini(env: Env, parts: Part[], opts: GeminiOpts = {}): Pr
     throw new AiError('other', 'Không gọi được Gemini')
   }
 
+  // 503 = Google quá tải, không tốn hạn mức nên không tính; các lỗi khác (429…) vẫn ghi một lượt
+  if (!res.ok && res.status !== 503) await recordUsage(env, model, false)
   if (res.status === 429 || res.status === 503) throw new AiError('rate', `Gemini ${res.status}`)
   // 404 = tên model đã bị Google gỡ/đổi → lỗi cấu hình, thử lại cũng vô ích
   if (res.status === 401 || res.status === 403 || res.status === 404) throw new AiError('config', `Gemini ${res.status}`)
   if (res.status === 400) {
     // khóa sai trả 400 "API key not valid"
     const text = await res.text().catch(() => '')
-    throw new AiError(/api key/i.test(text) ? 'config' : 'other', 'Gemini 400')
+    // phần đầu nội dung lỗi của Google (không có khóa) để xem trong log, vd "User location is not supported"
+    throw new AiError(/api key/i.test(text) ? 'config' : 'other', `Gemini 400: ${text.replace(/\s+/g, ' ').slice(0, 200)}`)
   }
-  if (!res.ok) throw new AiError('other', `Gemini ${res.status}`)
+  if (!res.ok) throw new AiError('other', `Gemini ${res.status}: ${(await res.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 200)}`)
 
   const data = (await res.json().catch(() => ({}))) as GeminiResponse
+  const um = data.usageMetadata
+  const prompt = um?.promptTokenCount ?? 0
+  // token suy luận (thoughtsTokenCount) cũng tính vào đầu ra
+  const output = (um?.candidatesTokenCount ?? 0) + (um?.thoughtsTokenCount ?? 0)
+  await recordUsage(env, model, true, { prompt, output, total: um?.totalTokenCount ?? prompt + output })
   if (data.promptFeedback?.blockReason) throw new AiError('other', 'Yêu cầu bị chặn: ' + data.promptFeedback.blockReason)
   const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? ''
   if (!text) throw new AiError('other', 'Gemini trả về rỗng')

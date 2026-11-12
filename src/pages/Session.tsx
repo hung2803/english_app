@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from 'react'
+﻿import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../api'
 import AiStep from '../components/AiStep'
 import Chat from '../components/Chat'
 import Quiz, { QuizResultView, type QuizQuestion, type QuizResult } from '../components/Quiz'
 import Flashcards from '../components/Flashcards'
+import ExerciseReview from '../components/ExerciseReview'
+import VocabReview from '../components/VocabReview'
 import { Btn, Card, ErrorBox, PageTitle, Speak, Spinner, fmtDate } from '../ui'
 
 interface Option { type: 'article' | 'youtube' | 'podcast' | 'upload'; upload_id?: number; title: string; url: string; why_vi: string; excerpt: string }
@@ -13,6 +15,9 @@ interface Lesson {
   title: string
   source: { type: string; url?: string; upload_id?: number; title: string; ai_written: boolean }
   excerpt: string
+  reading?: string
+  goals_vi?: string[]
+  task?: { en: string; vi: string }
   summary_vi: string
   explanation_vi: string
   vocab: { word: string; pos?: string; meaning_vi: string; example?: string }[]
@@ -31,6 +36,14 @@ interface SessionData {
   material: Material | null
   lesson: Lesson | null
   result?: QuizResult | null
+  /** ôn từ vựng bài trước: required && !passed → phải ôn xong (đúng 100%) mới bắt đầu buổi này */
+  review?: { required: boolean; passed: boolean; total: number; stage: number; stages: number; round: number }
+  /** bài tập buổi trước chưa đạt 100%: required → phải làm lại các câu sai trước (rồi mới tới phần ôn từ vựng) */
+  exercise?: { required: boolean; prev_seq: number | null; remaining: number; round: number }
+  /** 0 = quiz của buổi này chưa đạt 100% (phải làm lại câu sai ở buổi kế tiếp) */
+  quiz_mastered?: number | null
+  /** điểm lần nộp đầu khi đã làm lại quiz tới 100% (score lúc đó = 100) */
+  first_score?: number | null
 }
 
 const AI_MS = 70_000 // chờ phản hồi tối đa (máy chủ giới hạn ~60 giây)
@@ -91,7 +104,22 @@ function LessonView({ l }: { l: Lesson }) {
         ) : (
           <p className="text-sm text-slate-500">{l.source.title}</p>
         )}
-        <p className="mt-3 rounded-lg bg-slate-100 p-3 text-sm italic text-slate-800">{l.excerpt}</p>
+        {l.goals_vi && l.goals_vi.length > 0 && (
+          <div className="mt-3 rounded-lg bg-indigo-50 p-3 text-sm text-indigo-900">
+            <p className="font-semibold">Mục tiêu buổi học (~30 phút)</p>
+            <ul className="mt-1 list-disc space-y-0.5 pl-5">{l.goals_vi.map((g) => <li key={g}>{g}</li>)}</ul>
+            <p className="mt-2 text-xs text-indigo-800">Các bước: 1) Đọc bài ~8 phút · 2) Từ vựng và ngữ pháp ~8 phút · 3) Viết/nói ~6 phút · 4) Quiz ~8 phút</p>
+          </div>
+        )}
+        <h3 className="mb-1 mt-4 flex items-center gap-2 font-semibold">1. Đọc bài <Speak text={l.reading ?? l.excerpt} label="Nghe cả bài" /></h3>
+        {l.reading ? (
+          <>
+            <p className="whitespace-pre-line text-sm leading-relaxed text-slate-800">{l.reading}</p>
+            <p className="mt-3 rounded-lg bg-slate-100 p-3 text-sm italic text-slate-700">Trích từ nguồn: “{l.excerpt}”</p>
+          </>
+        ) : (
+          <p className="whitespace-pre-line rounded-lg bg-slate-100 p-3 text-sm leading-relaxed text-slate-800">{l.excerpt}</p>
+        )}
       </Card>
       <Card>
         <h3 className="mb-1 font-semibold">Tóm tắt</h3>
@@ -100,7 +128,7 @@ function LessonView({ l }: { l: Lesson }) {
         <p className="text-sm text-slate-700">{l.explanation_vi}</p>
       </Card>
       <Card>
-        <h3 className="mb-2 font-semibold">Từ vựng</h3>
+        <h3 className="mb-2 font-semibold">2. Từ vựng</h3>
         <ul className="space-y-2">
           {l.vocab.map((v) => (
             <li key={v.word} className="text-sm">
@@ -132,6 +160,14 @@ function LessonView({ l }: { l: Lesson }) {
           ))}
         </ul>
       </Card>
+      {l.task && (
+        <Card className="space-y-1">
+          <h3 className="font-semibold">3. Viết / nói</h3>
+          <p className="text-sm text-slate-700">{l.task.vi}</p>
+          <p className="text-sm italic text-slate-600">{l.task.en}</p>
+          <p className="text-xs text-slate-500">Trả lời trong khung chat bên dưới để được sửa lỗi. Sau đó làm quiz ở bước 4.</p>
+        </Card>
+      )}
     </div>
   )
 }
@@ -203,7 +239,16 @@ export default function SessionPage() {
         <LessonView l={s.lesson} />
         <Chat sessionId={s.id} readOnly={s.status === 'done'} />
         {s.status === 'done' ? (
-          s.result && <QuizResultView result={s.result} />
+          s.result && (
+            <>
+              {s.quiz_mastered === 0 && (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                  Bài tập chưa đạt 100%. Khi mở buổi kế tiếp, bạn cần làm lại các câu sai (và ôn từ vựng) rồi mới học tiếp được.
+                </div>
+              )}
+              <QuizResultView result={s.result} retried={s.first_score != null && s.score === 100 ? { finalScore: 100, firstScore: s.first_score } : undefined} />
+            </>
+          )
         ) : (
           s.lesson.quiz && s.lesson.quiz.length > 0 && <Quiz sessionId={s.id} quiz={s.lesson.quiz} onSubmitted={load} />
         )}
@@ -211,7 +256,11 @@ export default function SessionPage() {
     )
   }
   else if (s.status === 'done') body = <Card><p className="text-sm text-slate-600">Buổi học này đã xong.</p></Card>
-  else if (!m) {
+  else if (!m && s.exercise?.required) {
+    body = <ExerciseReview sessionId={s.id} onPassed={load} />
+  } else if (!m && s.review?.required && !s.review.passed) {
+    body = <VocabReview sessionId={s.id} onPassed={load} />
+  } else if (!m) {
     body = (
       <div className="space-y-3">
         <StartReview />

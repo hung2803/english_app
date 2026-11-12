@@ -1,10 +1,12 @@
-import type { Env } from './env'
+﻿import type { Env } from './env'
 import { addDays, todayVN } from './dates'
 import { composeLesson, type Lesson } from './lesson'
 import { gradeQuiz, publicQuiz, validateAnswers, wrongWords, type PublicQuizItem, type QuizResult } from './quiz'
 import { AiError } from './errors'
 import { findMaterials, MAX_OPTIONS, MIN_OPTIONS, type MaterialOption, type MaterialSet } from './materials'
 import { pickUploadOption, usageByUpload } from './upload-material'
+import { exerciseBlocks } from './exercise-review'
+import { reviewBlocks } from './vocab-review'
 
 export interface SessionRow {
   id: number
@@ -18,6 +20,10 @@ export interface SessionRow {
   result_json: string | null
   score: number | null
   completed_date: string | null
+  /** NULL = không yêu cầu, 0 = quiz chưa đạt 100% (phải làm lại câu sai), 1 = đã đạt 100% */
+  quiz_mastered: number | null
+  /** điểm lần nộp đầu, có khi đã làm lại quiz tới 100% (khi đó `score` = 100) */
+  first_score: number | null
 }
 
 export interface SessionInfo {
@@ -28,7 +34,7 @@ export interface SessionInfo {
 
 export async function loadSession(db: D1Database, id: number): Promise<SessionInfo | null> {
   const row = await db
-    .prepare('SELECT id, plan_id, week_no, seq, scheduled_date, status, material_json, lesson_json, result_json, score, completed_date FROM sessions WHERE id = ?')
+    .prepare('SELECT id, plan_id, week_no, seq, scheduled_date, status, material_json, lesson_json, result_json, score, completed_date, quiz_mastered, first_score FROM sessions WHERE id = ?')
     .bind(id)
     .first<SessionRow>()
   if (!row) return null
@@ -55,6 +61,8 @@ export function sessionView(s: SessionInfo) {
     status: r.status,
     score: r.score,
     completed_date: r.completed_date,
+    quiz_mastered: r.quiz_mastered,
+    first_score: r.first_score,
     material: r.material_json ? (JSON.parse(r.material_json) as MaterialSet) : null,
     lesson: r.lesson_json ? publicLesson(JSON.parse(r.lesson_json) as Lesson, r.status === 'done') : null,
     // kết quả quiz (đáp án + giải thích từng câu): chỉ có khi đã nộp
@@ -87,7 +95,7 @@ export async function usedUrls(db: D1Database, planId: number, exceptSessionId: 
 
 export type StartResult =
   | { ok: true; material: MaterialSet; created: boolean }
-  | { ok: false; reason: 'not_found' | 'done' | 'not_next' }
+  | { ok: false; reason: 'not_found' | 'done' | 'not_next' | 'exercise_required' | 'review_required' }
 
 /**
  * Bắt đầu buổi học: AI tìm 2–3 tài liệu. Chỉ buổi chưa xong đầu tiên mới bắt đầu được.
@@ -103,6 +111,9 @@ export async function startLesson(env: Env, sessionId: number): Promise<StartRes
   if (s.row.status === 'done') return { ok: false, reason: 'done' }
   if (s.row.material_json) return { ok: true, material: JSON.parse(s.row.material_json) as MaterialSet, created: false }
   if ((await nextSessionId(env.DB, s.row.plan_id)) !== s.row.id) return { ok: false, reason: 'not_next' }
+  // phải làm lại bài tập buổi trước tới 100%, rồi ôn từ vựng bài trước (đúng 100%) mới mở bài mới
+  if (await exerciseBlocks(env.DB, s)) return { ok: false, reason: 'exercise_required' }
+  if (await reviewBlocks(env.DB, s)) return { ok: false, reason: 'review_required' }
 
   let options: MaterialOption[] = []
   let searchFailed = false
@@ -262,8 +273,9 @@ export async function submitQuiz(db: D1Database, sessionId: number, answers: unk
   })
   const [first] = await db.batch([
     db
-      .prepare("UPDATE sessions SET status = 'done', score = ?, result_json = ?, completed_date = ? WHERE id = ? AND status != 'done'")
-      .bind(result.score, resultJson, today, sessionId),
+      // quiz_mastered: 1 nếu đúng hết, 0 nếu còn câu sai (phải làm lại các câu sai trước khi mở buổi kế tiếp)
+      .prepare("UPDATE sessions SET status = 'done', score = ?, result_json = ?, completed_date = ?, quiz_mastered = ? WHERE id = ? AND status != 'done'")
+      .bind(result.score, resultJson, today, result.score === 100 ? 1 : 0, sessionId),
     ...vocabStmts,
   ])
   if (((first.meta as { changes?: number }).changes ?? 0) !== 1) return { ok: false, reason: 'done' } // bị nộp trước bởi yêu cầu khác

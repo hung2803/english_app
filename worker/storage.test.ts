@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import app from './index'
 import { makeToken } from './auth'
 import { todayVN } from './dates'
@@ -97,7 +97,7 @@ describe('đoạn trích: giới hạn theo SỐ TỪ', () => {
     const own = Array.from({ length: 150 }, (_, i) => `word${i}`).join(' ')
     const l = normalizeLesson({ ...LESSON, excerpt: own }, { type: 'ai', title: 'AI', ai_written: true })
     expect(countWords(l.excerpt)).toBe(150)
-    expect(normalizeLesson({ ...LESSON, excerpt: 'x '.repeat(5000) }, { type: 'ai', title: 'AI', ai_written: true }).excerpt.length).toBeLessThanOrEqual(1500)
+    expect(normalizeLesson({ ...LESSON, excerpt: 'x '.repeat(5000) }, { type: 'ai', title: 'AI', ai_written: true }).excerpt.length).toBeLessThanOrEqual(3000)
   })
 })
 

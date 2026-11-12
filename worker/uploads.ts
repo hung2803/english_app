@@ -1,3 +1,4 @@
+import { blobStore } from './blob-store'
 import type { Env } from './env'
 import { inspectPage, isSafeUrl, type LinkProblem } from './link-check'
 import { urlKey } from './materials'
@@ -74,7 +75,7 @@ export type SaveResult =
   | { ok: true; upload: UploadRow }
   | { ok: false; reason: 'empty' | 'too_large' | 'unsupported_type' | 'type_mismatch' | 'duplicate'; existingId?: number }
 
-/** Lưu file người học tải lên: kiểm tra nội dung, chống trùng, ghi vào R2 rồi ghi CSDL (lỗi CSDL thì xóa file vừa ghi). */
+/** Lưu file người học tải lên: kiểm tra nội dung, chống trùng, ghi vào kho file (R2 hoặc D1) rồi ghi CSDL (lỗi CSDL thì xóa file vừa ghi). */
 export async function saveFileUpload(env: Env, f: { name: string; bytes: Uint8Array; title?: string }, today: string): Promise<SaveResult> {
   if (f.bytes.byteLength > MAX_FILE_BYTES) return { ok: false, reason: 'too_large' }
   const t = detectFileType(f.bytes, f.name)
@@ -88,7 +89,8 @@ export async function saveFileUpload(env: Env, f: { name: string; bytes: Uint8Ar
   const key = `uploads/${crypto.randomUUID()}.${t.ext}` // không dùng tên file của client trong khóa lưu trữ
   const excerpt = t.kind === 'text' ? clipWords(t.text!, UPLOAD_EXCERPT_WORDS) || null : null
 
-  await env.FILES.put(key, f.bytes, { httpMetadata: { contentType: t.mime } })
+  const store = blobStore(env)
+  await store.put(key, f.bytes, t.mime)
   try {
     const row = await env.DB.prepare(
       `INSERT INTO uploads (kind, title, r2_key, mime, size_bytes, excerpt, created_at, sha256)
@@ -98,7 +100,7 @@ export async function saveFileUpload(env: Env, f: { name: string; bytes: Uint8Ar
       .first<UploadRow>()
     return { ok: true, upload: row! }
   } catch (e) {
-    await env.FILES.delete(key).catch(() => {})
+    await store.delete(key).catch(() => {})
     if (/UNIQUE/i.test(String(e))) return { ok: false, reason: 'duplicate' } // hai yêu cầu cùng lúc
     throw e
   }
@@ -198,7 +200,7 @@ export async function deleteUpload(env: Env, id: number): Promise<DeleteResult> 
   let storage_cleaned = true
   if (row.r2_key) {
     try {
-      await env.FILES.delete(row.r2_key)
+      await blobStore(env).delete(row.r2_key)
     } catch (e) {
       storage_cleaned = false
       console.error('r2 delete failed', row.r2_key, e)

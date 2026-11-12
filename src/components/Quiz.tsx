@@ -37,15 +37,21 @@ const givenText = (it: QuizResultItem) => {
 }
 
 /** Kết quả quiz: điểm, đạt/chưa đạt, từng câu kèm đáp án đúng và giải thích tiếng Việt. */
-export function QuizResultView({ result }: { result: QuizResult }) {
+export function QuizResultView({ result, retried }: { result: QuizResult; retried?: { finalScore: number; firstScore: number | null } }) {
   return (
     <Card className="space-y-3">
       <div>
         <h3 className="font-semibold">Kết quả quiz</h3>
-        <p className="text-3xl font-bold text-indigo-700" aria-label="Điểm">{result.score}%</p>
-        <p className="text-sm text-slate-600">Đúng {result.right}/{result.total} câu</p>
+        <p className="text-3xl font-bold text-indigo-700" aria-label="Điểm">{retried ? retried.finalScore : result.score}%</p>
+        <p className="text-sm text-slate-600">
+          {retried
+            ? `Lần làm đầu: ${retried.firstScore ?? result.score}% (đúng ${result.right}/${result.total} câu)`
+            : `Đúng ${result.right}/${result.total} câu`}
+        </p>
       </div>
-      {result.passed ? (
+      {retried ? (
+        <p className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">✅ Đã làm lại các câu sai và đạt 100%. Danh sách bên dưới là kết quả lần làm đầu.</p>
+      ) : result.passed ? (
         <p className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">✅ Đạt! Bạn đã hoàn thành buổi học này.</p>
       ) : (
         <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">

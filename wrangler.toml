@@ -14,10 +14,12 @@ database_name = "english-app"
 database_id = "bf563b64-d664-476d-9b7b-a4a1247d0711"
 migrations_dir = "migrations"
 
-[[r2_buckets]]
-binding = "FILES"
-# Chạy `npx wrangler r2 bucket create english-app-files` một lần (local dev tự giả lập, không cần tạo)
-bucket_name = "english-app-files"
+# File người học tải lên được lưu trong D1 (bảng file_blobs), không cần R2.
+# Muốn dùng R2 thay thế: bật R2 trên dashboard, tạo bucket (`npx wrangler r2 bucket create english-app-files`)
+# rồi bỏ dấu # ở 3 dòng dưới. App tự dùng R2 khi có binding FILES.
+# [[r2_buckets]]
+# binding = "FILES"
+# bucket_name = "english-app-files"
 
 [triggers]
 # Mỗi 10 phút: nhắc học (nếu đúng giờ), tạo lại đề xuất tuần khi AI lỗi, gửi lại email chưa gửi được
@@ -28,3 +30,7 @@ GEMINI_MODEL = "gemini-3.5-flash-lite"
 
 # Secrets (không commit): GEMINI_API_KEY, APP_PASSWORD, SESSION_SECRET
 # Local: đặt trong .dev.vars | Production: npx wrangler secret put <NAME>
+
+# Lưu log của Worker trên dashboard (Workers > english-app > Logs) để xem lỗi AI trên production
+[observability]
+enabled = true

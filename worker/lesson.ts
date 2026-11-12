@@ -1,4 +1,5 @@
 import type { Env } from './env'
+import { blobStore } from './blob-store'
 import { AiError } from './errors'
 import { geminiJson, type Part } from './gemini'
 import { isSafeUrl, readLimited, visibleText, youtubeId } from './link-check'
@@ -35,6 +36,12 @@ export interface Lesson {
   source: LessonSource
   /** đoạn trích ngắn từ nguồn (hoặc toàn bộ bài đọc nếu do AI viết) */
   excerpt: string
+  /** bài đọc đầy đủ do AI viết lại bằng lời của mình (bài từ nguồn thật); bài AI tự viết thì nằm ở `excerpt` */
+  reading?: string
+  /** mục tiêu buổi học, tiếng Việt */
+  goals_vi?: string[]
+  /** bài tập viết/nói ngắn, làm trong khung chat để được sửa lỗi */
+  task?: { en: string; vi: string }
   summary_vi: string
   explanation_vi: string
   vocab: VocabItem[]
@@ -71,18 +78,21 @@ const MAX_SOURCE_CHARS = 7_000
 const MIN_SOURCE_CHARS = 300
 export const LESSON_EXCERPT_WORDS = 80
 const MAX_EXCERPT = 600 // đoạn trích từ nguồn: ngắn, không chép lại nội dung gốc
-const MAX_AI_TEXT = 1_500 // bài đọc do AI tự viết (nội dung của chính AI)
-const MIN_VOCAB = 4
-const MAX_VOCAB = 8
-const MAX_GRAMMAR = 2
+const MAX_AI_TEXT = 3_000 // bài đọc do AI tự viết (nội dung của chính AI)
+const MIN_VOCAB = 4 // dung sai: prompt yêu cầu 10-12, nhưng vẫn nhận bài có ít nhất 4 từ
+const MAX_VOCAB = 12
+const MAX_GRAMMAR = 3
 
 const UA = 'Mozilla/5.0 (compatible; EnglishCoach/1.0)'
 
 const SHAPE = `{
   "title": "lesson title in English, max 10 words",
   "excerpt": "ONE short quote (max 80 words) copied from the source that the lesson is based on",
+  "reading": "an ORIGINAL English reading text of 250-350 words at the learner's level, written in your own words about the same content (omit when you wrote the whole reading text in excerpt)",
+  "goals_vi": ["2-3 mục tiêu của buổi học, mỗi mục một câu ngắn tiếng Việt, bắt đầu bằng động từ"],
+  "task": {"en": "ONE short speaking/writing task in English (2-3 sentences of output), using this lesson's vocabulary", "vi": "đề bài bằng tiếng Việt"},
   "summary_vi": "tóm tắt nội dung bằng tiếng Việt, 2-4 câu",
-  "explanation_vi": "giải thích bằng tiếng Việt: ý chính, bối cảnh, mẹo hiểu bài, 3-6 câu",
+  "explanation_vi": "giải thích bằng tiếng Việt: ý chính, bối cảnh, mẹo hiểu bài, 5-8 câu",
   "vocab": [{"word":"","pos":"noun|verb|adj|adv|phrase","meaning_vi":"nghĩa tiếng Việt","example":"an English example sentence"}],
   "grammar": [{"point":"grammar point name","explanation_vi":"giải thích ngắn bằng tiếng Việt","example":"an English example sentence"}],
   "quiz": [
@@ -92,9 +102,10 @@ const SHAPE = `{
 }`
 
 const RULES = (c: ComposeContext) => `The learner is Vietnamese, CEFR ${c.level}; week topic: "${c.topic}"; the whole session lasts 30 minutes.
-Produce 6-8 useful vocabulary items (words or phrases that actually appear in the material, suited to ${c.level}), and 1-2 grammar points seen in the material.
+Produce 10-12 useful vocabulary items (words or phrases that actually appear in the material or your reading text, suited to ${c.level}), each with an English example sentence, and 2-3 grammar points seen in the text, each with an example.
+Write "explanation_vi" as 5-8 sentences that walk the learner through the text paragraph by paragraph.
 All explanations and meanings are in Vietnamese; examples are in English at the learner's level. Do not reproduce the source text beyond the short excerpt.
-Also write the end-of-lesson quiz: exactly ${QUIZ_SIZE} items, 5 "mcq" and 3 "fill".
+Also write the end-of-lesson quiz: exactly ${QUIZ_SIZE} items, 5 "mcq" and 3 "fill"; at least 2 of the mcq check reading comprehension of the text.
 - "mcq": 4 different options, "answer" is the zero-based index of the single correct option.
 - "fill": ONE sentence containing exactly one "___" blank; "answer" is one word or a short phrase (max 3 words) that clearly fits.
 - Every item must be answerable from this lesson (its vocabulary, grammar, summary or excerpt) and suited to ${c.level}; no trick questions; no two items about the same thing.
@@ -131,7 +142,7 @@ ${RULES(c)}`
   if (mode.kind === 'video' && src) {
     return `Build a 30-minute English lesson from this YouTube video ("${src.title}"), using its spoken English / captions.\n${RULES(c)}`
   }
-  return `Write your OWN original English reading text (120-180 words, CEFR ${c.level}) about "${c.topic}", then build the lesson on it. Put the whole reading text in "excerpt" (this one time it may be longer than 80 words).\n${RULES(c)}`
+  return `Write your OWN original English reading text (250-350 words, CEFR ${c.level}) about "${c.topic}", then build the lesson on it. Put the whole reading text in "excerpt" (this one time it may be longer than 80 words) and omit "reading".\n${RULES(c)}`
 }
 
 const str = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '')
@@ -144,6 +155,10 @@ export function normalizeLesson(raw: unknown, source: LessonSource, notice_vi?: 
   const excerpt = source.ai_written ? str(r.excerpt, MAX_AI_TEXT) : clipWords(str(r.excerpt, MAX_EXCERPT), LESSON_EXCERPT_WORDS)
   const summary_vi = str(r.summary_vi, 2000)
   const explanation_vi = str(r.explanation_vi, 3000)
+  const reading = str(r.reading, MAX_AI_TEXT)
+  const goals_vi = (Array.isArray(r.goals_vi) ? r.goals_vi : []).map((g) => str(g, 160)).filter(Boolean).slice(0, 3)
+  const t = (r.task ?? {}) as Record<string, unknown>
+  const task = str(t.en, 400) && str(t.vi, 400) ? { en: str(t.en, 400), vi: str(t.vi, 400) } : undefined
 
   const seen = new Set<string>()
   const vocab: VocabItem[] = []
@@ -169,7 +184,9 @@ export function normalizeLesson(raw: unknown, source: LessonSource, notice_vi?: 
   }
   const quiz = normalizeQuiz(r.quiz, vocab.map((v) => v.word))
   if (!quiz) throw new AiError('other', 'Quiz AI soạn không đủ câu hợp lệ')
-  return { title, source, excerpt, summary_vi, explanation_vi, vocab, grammar, quiz, ...(notice_vi ? { notice_vi } : {}) }
+  return {
+    title, source, excerpt, ...(reading && !source.ai_written ? { reading } : {}), ...(goals_vi.length ? { goals_vi } : {}), ...(task ? { task } : {}),
+    summary_vi, explanation_vi, vocab, grammar, quiz, ...(notice_vi ? { notice_vi } : {}) }
 }
 
 const AI_SOURCE: LessonSource = { type: 'ai', title: 'Bài đọc do AI viết', ai_written: true }
@@ -221,9 +238,8 @@ export async function composeLesson(env: Env, c: ComposeContext, opts: { budgetM
       return text.length < MIN_SOURCE_CHARS ? writeByAi(unreadable) : textLesson(text, 1, 1)
     }
 
-    const obj = row.r2_key ? await env.FILES.get(row.r2_key) : null
-    if (!obj) return writeByAi(unreadable)
-    const bytes = new Uint8Array(await obj.arrayBuffer())
+    const bytes = row.r2_key ? await blobStore(env).get(row.r2_key) : null
+    if (!bytes) return writeByAi(unreadable)
 
     if (row.mime === 'application/pdf') {
       try {

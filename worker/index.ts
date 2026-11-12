@@ -1,4 +1,4 @@
-import { Hono, type Context } from 'hono'
+﻿import { Hono, type Context } from 'hono'
 import { checkPassword, endSession, isLoggedIn, requireAuth, startSession } from './auth'
 import { todayVN } from './dates'
 import type { Env } from './env'
@@ -13,7 +13,10 @@ import { buildProgress, listHistory } from './progress'
 import { getSettings, updateSettings } from './settings'
 import { parseSubscription, pushToAll, removeSubscription, saveSubscription } from './webpush'
 import { missingSecrets } from './env'
-import { dueCards, FILTERS, isGrade, listVocab, reviewCard, type VocabFilter } from './flashcards'
+import { modelInfo, saveModel } from './ai-model'
+import { reviewQuestions, reviewStatus as vocabReviewStatus, submitReview } from './vocab-review'
+import { exerciseQuestions, exerciseStatus, submitExercise } from './exercise-review'
+import { dueCards, FILTERS, isGrade, listVocab, practiceCards, reviewCard, SCOPES, type PracticeScope, type VocabFilter } from './flashcards'
 import { dispatchWeeklyReview } from './weekly'
 import { approveAdjustment, decideAdjustment, getAdjustment, listAdjustments, toView, type AdjustmentStatus } from './adjustment-store'
 import { extendPlan, planProgress, reviewStatus, savePlan, syncSchedule, type PlanRef } from './plan-store'
@@ -267,13 +270,60 @@ app.post('/api/adjustments/:id/reject', async (c) => {
 app.get('/api/sessions/:id', async (c) => {
   const s = await loadSession(c.env.DB, Number(c.req.param('id')))
   if (!s) return c.json({ error: 'not_found', message: 'Không tìm thấy buổi học.' }, 404)
-  return c.json({ session: sessionView(s) })
+  return c.json({ session: { ...sessionView(s), exercise: await exerciseStatus(c.env.DB, s), review: await vocabReviewStatus(c.env.DB, s) } })
+})
+
+const EXERCISE_ERRORS = {
+  not_found: [404, 'Không tìm thấy buổi học.'],
+  not_required: [409, 'Buổi này không cần làm lại bài tập của buổi trước.'],
+  invalid: [400, 'Câu trả lời không hợp lệ.'],
+} as const
+
+/** Các câu còn sai trong bài tập buổi trước (buổi này bị chặn tới khi đạt 100%). Lựa chọn trắc nghiệm được xáo lại. */
+app.get('/api/sessions/:id/exercise-review', async (c) => {
+  const r = await exerciseQuestions(c.env.DB, Number(c.req.param('id')))
+  if (!r.ok) return c.json({ error: r.reason, message: EXERCISE_ERRORS[r.reason][1] }, EXERCISE_ERRORS[r.reason][0])
+  return c.json({ status: r.status, questions: r.questions })
+})
+
+/** Nộp một lượt làm lại: { answers: [{ index, choice }] }. Chấm ở máy chủ; câu sai ở lại lượt sau, hết câu sai thì mở khóa. */
+app.post('/api/sessions/:id/exercise-review', async (c) => {
+  const body = await c.req.json<{ answers?: unknown }>().catch(() => ({ answers: undefined }))
+  const r = await submitExercise(c.env.DB, Number(c.req.param('id')), body.answers)
+  if (!r.ok) return c.json({ error: r.reason, message: EXERCISE_ERRORS[r.reason][1] }, EXERCISE_ERRORS[r.reason][0])
+  const { ok: _ok, ...rest } = r
+  return c.json(rest)
+})
+
+const REVIEW_ERRORS = {
+  not_found: [404, 'Không tìm thấy buổi học.'],
+  not_required: [409, 'Buổi này không cần ôn từ vựng bài trước.'],
+  passed: [409, 'Bạn đã ôn xong từ vựng bài trước.'],
+  invalid: [400, 'Câu trả lời không hợp lệ.'],
+} as const
+
+/** Câu hỏi ôn từ vựng bài trước (chỉ các từ chưa đúng). Phải đạt 100% mới bắt đầu được buổi này. */
+app.get('/api/sessions/:id/vocab-review', async (c) => {
+  const r = await reviewQuestions(c.env.DB, Number(c.req.param('id')))
+  if (!r.ok) return c.json({ error: r.reason, message: REVIEW_ERRORS[r.reason][1] }, REVIEW_ERRORS[r.reason][0])
+  return c.json({ status: r.status, questions: r.questions, study: r.study })
+})
+
+/** Nộp một lượt ôn: { answers: [{ word, dir, choice }] }. Chấm ở máy chủ; từ sai ở lại lượt sau. */
+app.post('/api/sessions/:id/vocab-review', async (c) => {
+  const body = await c.req.json<{ answers?: unknown }>().catch(() => ({ answers: undefined }))
+  const r = await submitReview(c.env.DB, Number(c.req.param('id')), body.answers)
+  if (!r.ok) return c.json({ error: r.reason, message: REVIEW_ERRORS[r.reason][1] }, REVIEW_ERRORS[r.reason][0])
+  const { ok: _ok, ...rest } = r
+  return c.json(rest)
 })
 
 const START_ERRORS = {
   not_found: [404, 'Không tìm thấy buổi học.'],
   done: [409, 'Buổi học này đã xong.'],
   not_next: [409, 'Hãy học các buổi trước theo thứ tự.'],
+  exercise_required: [409, 'Hãy làm lại các câu sai của bài tập buổi trước và đạt 100% để mở bài mới.'],
+  review_required: [409, 'Hãy ôn từ vựng bài trước và đạt 100% để mở bài mới.'],
 } as const
 
 /** Bắt đầu buổi: AI tìm 2–3 tài liệu để người học chọn 1. Gọi lại trả đúng danh sách cũ. */
@@ -435,11 +485,21 @@ app.post('/api/sessions/:id/quiz', async (c) => {
 /** Thẻ đến hạn ôn (mặc định 10 thẻ ≈ 5 phút), cũ nhất trước. ?limit= (tối đa 50) */
 app.get('/api/flashcards/due', async (c) => c.json(await dueCards(c.env.DB, todayVN(), Number(c.req.query('limit') ?? 0) || undefined)))
 
-/** Đánh giá một lần ôn: { grade: 'again' | 'hard' | 'good' | 'easy' } → lịch ôn kế tiếp, "đã thuộc" khi khoảng cách ≥ 21 ngày. */
+/** Ôn tự do: thẻ ngẫu nhiên BẤT KỲ (kể cả chưa đến hạn). ?scope=all|learning|learned, ?limit= */
+app.get('/api/flashcards/practice', async (c) => {
+  const scope = (c.req.query('scope') ?? 'all') as PracticeScope
+  if (!SCOPES.includes(scope)) return c.json({ error: 'bad_request', message: 'Phạm vi ôn không hợp lệ.' }, 400)
+  return c.json(await practiceCards(c.env.DB, scope, Number(c.req.query('limit') ?? 0) || undefined))
+})
+
+/**
+ * Đánh giá một lần ôn: { grade: 'again' | 'hard' | 'good' | 'easy', practice?: boolean } → lịch ôn kế tiếp, "đã thuộc" khi khoảng cách ≥ 21 ngày.
+ * practice = ôn tự do: chỉ "Quên" đổi lịch.
+ */
 app.post('/api/flashcards/:id/review', async (c) => {
-  const body = await c.req.json<{ grade?: unknown }>().catch(() => ({ grade: undefined }))
+  const body = await c.req.json<{ grade?: unknown; practice?: unknown }>().catch(() => ({ grade: undefined, practice: undefined }))
   if (!isGrade(body.grade)) return c.json({ error: 'bad_request', message: 'Mức đánh giá không hợp lệ (Quên / Khó / Tốt / Dễ).' }, 400)
-  const r = await reviewCard(c.env.DB, Number(c.req.param('id')), body.grade, todayVN())
+  const r = await reviewCard(c.env.DB, Number(c.req.param('id')), body.grade, todayVN(), body.practice === true)
   if (!r.ok) return c.json({ error: 'not_found', message: 'Không tìm thấy từ vựng.' }, 404)
   return c.json({ next: r.next, remaining_due: r.remaining_due })
 })
@@ -484,6 +544,16 @@ app.put('/api/settings', async (c) => {
     return c.json({ error: 'bad_request', field: r.field, message: msg }, 400)
   }
   return c.json({ settings: r.settings, notifications: await notificationStatus(c) })
+})
+
+// ---------- Chọn model AI ----------
+app.get('/api/ai-model', async (c) => c.json(await modelInfo(c.env)))
+
+/** Đổi model Gemini: { model: <id trong danh sách> } */
+app.put('/api/ai-model', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { model?: unknown } | null
+  if (!(await saveModel(c.env, body?.model))) return c.json({ error: 'bad_request', message: 'Model không hợp lệ.' }, 400)
+  return c.json(await modelInfo(c.env))
 })
 
 // ---------- Thông báo đẩy trình duyệt ----------

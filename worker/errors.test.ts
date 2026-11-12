@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Hono } from 'hono'
-import { AiError, handleError } from './errors'
+import { AiError, aiErrorBody, handleError } from './errors'
 import { gemini, extractJson } from './gemini'
 import type { Env } from './env'
 
@@ -27,6 +27,11 @@ describe('gemini() phân loại lỗi', () => {
   it('thiếu khóa → config', async () => {
     expect(await kindOf(gemini({} as Env, [{ text: 'x' }]))).toBe('config')
   })
+  it('503 báo "Google quá tải", 429 báo hết hạn mức (không nhầm lẫn)', () => {
+    expect(aiErrorBody(new AiError('rate', 'Gemini 503')).message).toMatch(/quá tải/)
+    expect(aiErrorBody(new AiError('rate', 'Gemini 429')).message).toMatch(/hết hạn mức/)
+  })
+
   it('429 và 503 → rate', async () => {
     stubFetch(new Response('', { status: 429 }))
     expect(await kindOf(gemini(env, [{ text: 'x' }]))).toBe('rate')

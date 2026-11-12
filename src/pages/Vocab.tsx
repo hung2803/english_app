@@ -103,6 +103,26 @@ export default function Vocab() {
         {stats.due > 0 ? <Link to="/review"><Btn>Ôn ngay</Btn></Link> : <Btn disabled>Ôn ngay</Btn>}
       </Card>
 
+      <Card className="mb-3 space-y-2">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-800">Ôn tự do</h2>
+          <p className="text-xs text-slate-500">Ôn thêm bất kỳ từ nào, kể cả chưa đến hạn. Lịch ôn chỉ đổi với từ bạn bấm Quên.</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {([
+            ['all', 'Tất cả', stats.total],
+            ['learning', 'Đang học', stats.total - stats.learned],
+            ['learned', 'Đã thuộc', stats.learned],
+          ] as const).map(([scope, label, n]) =>
+            n > 0 ? (
+              <Link key={scope} to={`/review?mode=practice&scope=${scope}`}><Btn variant="ghost">{label} ({n})</Btn></Link>
+            ) : (
+              <Btn key={scope} variant="ghost" disabled>{label} (0)</Btn>
+            ),
+          )}
+        </div>
+      </Card>
+
       <div className="mb-3 space-y-2">
         <input
           type="search"

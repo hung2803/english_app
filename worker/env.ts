@@ -1,7 +1,7 @@
 export interface Env {
   DB: D1Database
-  /** R2: file người học tải lên (PDF, văn bản) */
-  FILES: R2Bucket
+  /** R2 (tùy chọn): file người học tải lên (PDF, văn bản). Không có thì lưu trong D1 (xem blob-store.ts) */
+  FILES?: R2Bucket
   ASSETS: Fetcher
   // biến thường (wrangler.toml)
   GEMINI_MODEL?: string

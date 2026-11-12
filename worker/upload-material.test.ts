@@ -72,12 +72,16 @@ const sid = async (seq: number) => (await db.prepare('SELECT id FROM sessions WH
 const begin = async (seq = 1) => json(await call(`/api/sessions/${await sid(seq)}/materials`, {}))
 const choose = async (index: number, seq = 1) => call(`/api/sessions/${await sid(seq)}/choose`, { index })
 const compose = async (seq = 1) => call(`/api/sessions/${await sid(seq)}/compose`, {})
-const finish = (seq: number) => db.prepare("UPDATE sessions SET status='done', score=80, completed_date=? WHERE seq=?").bind(todayVN(), seq).run()
+const finish = async (seq: number) => {
+  await db.prepare("UPDATE sessions SET status='done', score=80, completed_date=? WHERE seq=?").bind(todayVN(), seq).run()
+  // buổi kế tiếp đã ôn từ vựng bài trước (cổng ôn từ vựng không phải trọng tâm của các test này)
+  await db.prepare('UPDATE sessions SET vocab_review_json = ? WHERE seq = ?').bind('{"passed":true,"remaining":[],"round":1}', seq + 1).run()
+}
 
 /** Chèn thẳng tài liệu tải lên (file trong R2 hoặc link) */
 async function addFile(name: string, bytes: Uint8Array, mime: string, title = name) {
   const key = `uploads/${crypto.randomUUID()}.${name.split('.').pop()}`
-  await env.FILES.put(key, bytes)
+  await env.FILES!.put(key, bytes)
   return (await db.prepare("INSERT INTO uploads (kind, title, r2_key, mime, size_bytes, excerpt, created_at, sha256) VALUES ('file', ?, ?, ?, ?, ?, ?, ?) RETURNING id")
     .bind(title, key, mime, bytes.byteLength, mime === 'text/plain' ? 'Chapter one begins here.' : null, todayVN(), crypto.randomUUID()).first<{ id: number }>())!.id
 }

@@ -48,7 +48,8 @@ export async function collectWeekData(db: D1Database, week: WeekRef): Promise<We
     .bind(week.planId, week.weekNo)
     .first<{ topic: string }>()
   const sessions = await db
-    .prepare("SELECT score, result_json FROM sessions WHERE plan_id = ? AND week_no = ? AND status = 'done' ORDER BY seq")
+    // điểm lần nộp ĐẦU (làm lại tới 100% không che mất chỗ người học còn yếu)
+    .prepare("SELECT COALESCE(first_score, score) AS score, result_json FROM sessions WHERE plan_id = ? AND week_no = ? AND status = 'done' ORDER BY seq")
     .bind(week.planId, week.weekNo)
     .all<{ score: number | null; result_json: string | null }>()
   const scores = sessions.results.map((s) => s.score).filter((s): s is number => s !== null)

@@ -1,4 +1,4 @@
-// @vitest-environment jsdom
+﻿// @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -45,7 +45,13 @@ afterEach(() => {
   delete (globalThis as any).SpeechSynthesisUtterance
 })
 
-const showMeaning = () => fireEvent.click(screen.getByText('Hiện nghĩa'))
+/** Hiện nghĩa rồi viết lại ĐÚNG từ (bước gõ từ) để tới phần chấm mức nhớ. */
+const showMeaning = () => {
+  const w = screen.getByTestId('card-word').textContent!
+  fireEvent.click(screen.getByText('Hiện nghĩa'))
+  fireEvent.change(screen.getByLabelText('Viết lại từ tiếng Anh'), { target: { value: w } })
+  fireEvent.click(screen.getByRole('button', { name: 'Kiểm tra' }))
+}
 const grade = (name: 'Quên' | 'Khó' | 'Tốt' | 'Dễ') => fireEvent.click(screen.getByRole('button', { name }))
 const word = () => screen.getByTestId('card-word').textContent
 

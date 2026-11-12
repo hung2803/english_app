@@ -71,6 +71,14 @@ describe('điểm quiz được lưu cho từng buổi', () => {
       { seq: 3, status: 'done', score: 0 },
     ])
   })
+  it('làm lại tới 100%: điểm hiển thị thành 100 nhưng AI đánh giá tuần vẫn dùng điểm lần nộp đầu', async () => {
+    await submit(1, [0, 1, 2]) // 3/8 = 38
+    await db.prepare('UPDATE sessions SET score = 100, first_score = 38, quiz_mastered = 1 WHERE seq = 1').run() // như sau khi làm lại đạt 100%
+    expect((await db.prepare('SELECT score FROM sessions WHERE seq = 1').first<any>()).score).toBe(100)
+    const d = await collectWeekData(db, WEEK1)
+    expect(d.scores).toEqual([38])
+    expect(d.lowCount).toBe(1)
+  })
   it('điểm thấp (<70%) vẫn được lưu và buổi vẫn xong', async () => {
     const r = await submit(1, [0, 1])
     expect(r.passed).toBe(false)

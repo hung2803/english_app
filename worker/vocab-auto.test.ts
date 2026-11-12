@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import app from './index'
 import { makeToken } from './auth'
 import { addDays, todayVN } from './dates'
@@ -58,7 +58,11 @@ async function compose(seq = 1) {
   expect((await call(`/api/sessions/${await sid(seq)}/choose`, { index: 0 })).status).toBe(200)
   return call(`/api/sessions/${await sid(seq)}/compose`, {})
 }
-const finish = (seq: number) => db.prepare("UPDATE sessions SET status='done', score=80, completed_date=? WHERE seq=?").bind(TODAY, seq).run()
+const finish = async (seq: number) => {
+  await db.prepare("UPDATE sessions SET status='done', score=80, completed_date=? WHERE seq=?").bind(TODAY, seq).run()
+  // buổi kế tiếp đã ôn từ vựng bài trước (cổng ôn từ vựng không phải trọng tâm của các test này)
+  await db.prepare('UPDATE sessions SET vocab_review_json = ? WHERE seq = ?').bind('{"passed":true,"remaining":[],"round":1}', seq + 1).run()
+}
 const vocab = async () => (await db.prepare('SELECT * FROM vocab ORDER BY id').all<any>()).results
 const words = async () => (await vocab()).map((v) => v.word)
 

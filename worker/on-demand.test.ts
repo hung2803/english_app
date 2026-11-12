@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import app from './index'
 import { makeToken } from './auth'
 import { todayVN } from './dates'
@@ -187,6 +187,7 @@ describe('chỉ khi người học bắt đầu buổi nào thì buổi đó m�
     await call(`/api/sessions/${await sid(1)}/choose`, { index: 0 })
     await call(`/api/sessions/${await sid(1)}/compose`, {})
     await db.prepare("UPDATE sessions SET status='done', score=90, completed_date=? WHERE seq=1").bind(todayVN()).run()
+    await db.prepare('UPDATE sessions SET vocab_review_json = ? WHERE seq = 2').bind('{"passed":true,"remaining":[],"round":1}').run()
     gemini.length = 0
     await call('/api/plan')
     await call(`/api/sessions/${await sid(2)}`)

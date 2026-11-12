@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { api } from './api'
+import AiPicker from './components/AiPicker'
 import Layout from './components/Layout'
 import Adjustments from './pages/Adjustments'
 import Login from './pages/Login'
@@ -35,7 +36,8 @@ function Placeholder({ title, hint }: { title: string; hint: string }) {
         <p className="text-sm text-slate-600">Chức năng này sẽ có ở bước sau.</p>
       </Card>
       {title === 'Hôm nay' && (
-        <div className="mt-4">
+        <div className="mt-4 space-y-3">
+          <AiPicker />
           <ApiStatus />
         </div>
       )}
