@@ -4,7 +4,7 @@ import { makeToken } from './auth'
 import { todayVN } from './dates'
 import { createTestDb } from './test-db'
 import type { Env } from './env'
-import { QUIZ8 } from './test-fixtures'
+import { QUIZ8, READING } from './test-fixtures'
 
 const SECRET = 'test-secret-test-secret-test-secret'
 let env: Env
@@ -12,7 +12,7 @@ let db: D1Database
 
 const LESSON = {
   title: 'My daily routine',
-  excerpt: 'I get up at six. I drink tea and go to work by bus. In the evening I read a book.',
+  excerpt: READING,
   summary_vi: 'Bài nói về thói quen hằng ngày.',
   explanation_vi: 'Người viết kể các việc làm trong ngày bằng thì hiện tại đơn.',
   vocab: ['routine', 'breakfast', 'commute', 'evening', 'habit'].map((w) => ({ word: w, pos: 'noun', meaning_vi: 'nghĩa ' + w, example: `A ${w}.` })),

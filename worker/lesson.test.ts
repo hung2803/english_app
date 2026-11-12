@@ -1,4 +1,4 @@
-﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import app from './index'
 import { makeToken } from './auth'
 import { todayVN } from './dates'
@@ -7,7 +7,7 @@ import { buildLessonPrompt, composeLesson, normalizeLesson, type LessonSource } 
 import type { MaterialOption } from './materials'
 import { createTestDb } from './test-db'
 import type { Env } from './env'
-import { QUIZ8 } from './test-fixtures'
+import { QUIZ8, READING } from './test-fixtures'
 
 const SECRET = 'test-secret-test-secret-test-secret'
 let env: Env
@@ -23,7 +23,7 @@ const PAGE = `<html><head><title>Food</title></head><body><nav>MENU LINK</nav><p
 
 const good = (over: Record<string, unknown> = {}) => ({
   title: 'Ordering food and drinks',
-  excerpt: 'Can I have a coffee, please?',
+  excerpt: READING,
   summary_vi: 'Bài nói về cách gọi đồ ăn thức uống.',
   explanation_vi: 'Người nói gọi cà phê một cách lịch sự. Cấu trúc "Can I have ...?" rất hữu ích.',
   vocab: [
@@ -92,7 +92,8 @@ describe('normalizeLesson', () => {
   const SRC: LessonSource = { type: 'article', url: 'https://example.com/food', title: 'Food', ai_written: false }
   it('bài hợp lệ → đủ link nguồn, đoạn trích, tóm tắt, giải thích, từ vựng, ngữ pháp', () => {
     const l = normalizeLesson(good(), SRC)
-    expect(l).toMatchObject({ title: 'Ordering food and drinks', source: SRC, excerpt: 'Can I have a coffee, please?' })
+    expect(l).toMatchObject({ title: 'Ordering food and drinks', source: SRC })
+    expect(READING.startsWith(l.excerpt.slice(0, 80))).toBe(true) // nguồn thật: đoạn trích chỉ là phần đầu, đã cắt ngắn
     expect(l.summary_vi).toContain('Bài nói')
     expect(l.explanation_vi).not.toBe('')
     expect(l.vocab).toHaveLength(5)
@@ -211,7 +212,7 @@ describe('composeLesson', () => {
     await expect(composeLesson(env, { ...base, chosen: ART })).rejects.toBeInstanceOf(AiError)
   })
   it('chỉ lưu đoạn trích ngắn, không có nội dung gốc của trang', async () => {
-    net([good({ excerpt: 'y'.repeat(4000) })])
+    net([good({ excerpt: READING.slice(0, 500) + ' ' + 'y'.repeat(4000) })])
     const l = await composeLesson(env, { ...base, chosen: ART })
     expect(JSON.stringify(l)).not.toContain('UNIQUE_SOURCE_MARKER')
     expect(l.excerpt.length).toBeLessThanOrEqual(600)

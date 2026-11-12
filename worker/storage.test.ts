@@ -1,4 +1,4 @@
-﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import app from './index'
 import { makeToken } from './auth'
 import { todayVN } from './dates'
@@ -7,7 +7,7 @@ import { MATERIAL_EXCERPT_WORDS, normalizeOptions } from './materials'
 import { clipWords, countWords } from './text'
 import { createTestDb } from './test-db'
 import type { Env } from './env'
-import { QUIZ8 } from './test-fixtures'
+import { QUIZ_LANG } from './test-fixtures'
 
 const SECRET = 'test-secret-test-secret-test-secret'
 let env: Env
@@ -27,7 +27,7 @@ const LESSON = {
   explanation_vi: 'Giải thích.',
   vocab: ['menu', 'bill', 'order', 'waiter', 'tip'].map((w) => ({ word: w, meaning_vi: 'nghĩa', example: `A ${w}.` })),
   grammar: [{ point: 'Can I have', explanation_vi: 'Xin phép.' }],
-  quiz: QUIZ8,
+  quiz: QUIZ_LANG,
 }
 
 beforeEach(async () => {

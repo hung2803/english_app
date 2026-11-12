@@ -114,6 +114,19 @@ export default function ExerciseReview({ sessionId, onPassed }: { sessionId: num
         <p className="mt-1 text-xs text-slate-500">Câu {idx + 1}/{questions.length}</p>
       </div>
 
+      <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-900" data-testid="exercise-howto">
+        <p className="font-semibold">Cách làm</p>
+        <ol className="mt-1 list-decimal space-y-0.5 pl-5">
+          <li>Đây là các câu bạn đã làm <strong>sai</strong> ở bài tập buổi {status.prev_seq ?? 'trước'} ({status.remaining} câu), không phải cả bài.</li>
+          <li>Câu trắc nghiệm: bấm vào <strong>một</strong> đáp án. Câu điền từ: gõ từ còn thiếu vào ô (chữ hoa hay thường đều được).</li>
+          <li>Trả lời hết các câu thì hệ thống chấm và hiện đáp án đúng kèm giải thích.</li>
+          <li>Còn câu sai thì làm lại chỉ các câu đó, tới khi <strong>đúng 100%</strong> mới mở bài mới (điểm lần đầu vẫn được giữ).</li>
+        </ol>
+      </div>
+
+      <p className="text-xs font-medium uppercase tracking-wide text-slate-500" data-testid="exercise-kind">
+        {q.type === 'mcq' ? 'Chọn một đáp án đúng' : 'Gõ từ còn thiếu vào chỗ ___'}
+      </p>
       <p className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-base font-medium text-slate-800" data-testid="exercise-question" aria-live="polite">{q.question}</p>
 
       {q.type === 'mcq' ? (

@@ -66,7 +66,7 @@ describe('Flashcards — bước viết lại từ sau khi hiện nghĩa', () =>
     for (const g of ['Khó', 'Tốt', 'Dễ']) expect(screen.queryByRole('button', { name: g })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Quên' }))
     await waitFor(() => expect(s.calls.some((c) => c.key === 'POST /flashcards/1/review')).toBe(true))
-    expect(s.calls.find((c) => c.key === 'POST /flashcards/1/review')!.body).toEqual({ grade: 'again' })
+    expect(s.calls.find((c) => c.key === 'POST /flashcards/1/review')!.body).toEqual({ grade: 'again', typed: 'ordr' }) // gửi cả chữ đã viết để máy chủ tự kiểm
     await waitFor(() => expect(screen.getByTestId('card-word').textContent).toBe('menu'))
     expect(screen.getByText('Đã ôn 0/2')).toBeTruthy() // thẻ sai chưa tính là đã ôn
   })
@@ -93,5 +93,11 @@ describe('Flashcards — bước viết lại từ sau khi hiện nghĩa', () =>
     await waitFor(() => expect(screen.getByTestId('card-word').textContent).toBe('menu'))
     fireEvent.click(screen.getByRole('button', { name: 'Hiện nghĩa' }))
     expect(box().value).toBe('')
+  })
+
+  it('hết thẻ hôm nay nhưng còn thẻ vượt trần ngày: báo đã ôn đủ và số thẻ chờ ngày mai', async () => {
+    server({ 'GET /flashcards/due': { cards: [], total_due: 0, backlog: 12, daily_cap: 20, done_today: 20 } })
+    render(<Flashcards />)
+    expect(await screen.findByText('Bạn đã ôn đủ 20 thẻ hôm nay. Còn 12 thẻ chờ sang ngày mai.')).toBeTruthy()
   })
 })

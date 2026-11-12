@@ -36,6 +36,8 @@ export default function Flashcards({ limit = 10, onFinish, practice }: { limit?:
   const [batchSize, setBatchSize] = useState(0)
   const [totalDue, setTotalDue] = useState(0)
   const [remaining, setRemaining] = useState(0) // thẻ đến hạn còn lại ngoài lượt này
+  const [backlog, setBacklog] = useState(0) // thẻ đến hạn phải chờ sang ngày sau (vượt trần mỗi ngày)
+  const [cap, setCap] = useState(0)
   const [done, setDone] = useState(0)
   // front: thấy từ tiếng Anh · typing: thấy nghĩa tiếng Việt, tự viết lại từ · result: hé lộ từ, ví dụ và chấm mức nhớ
   const [phase, setPhase] = useState<'front' | 'typing' | 'result'>('front')
@@ -56,12 +58,14 @@ export default function Flashcards({ limit = 10, onFinish, practice }: { limit?:
   const load = useCallback(() => {
     setLoadError(null)
     setQueue(null)
-    api<{ cards: FlashCard[]; total_due: number }>(practice ? `/flashcards/practice?scope=${practice}&limit=${limit}` : `/flashcards/due?limit=${limit}`)
+    api<{ cards: FlashCard[]; total_due: number; backlog?: number; daily_cap?: number }>(practice ? `/flashcards/practice?scope=${practice}&limit=${limit}` : `/flashcards/due?limit=${limit}`)
       .then((r) => {
         setQueue(r.cards)
         setBatchSize(r.cards.length)
         setTotalDue(r.total_due)
         setRemaining(Math.max(0, r.total_due - r.cards.length))
+        setBacklog(r.backlog ?? 0)
+        setCap(r.daily_cap ?? 0)
         setDone(0)
         resetCard()
         setError(null)
@@ -80,7 +84,7 @@ export default function Flashcards({ limit = 10, onFinish, practice }: { limit?:
     setError(null)
     setLastGrade(g)
     try {
-      await api(`/flashcards/${card.id}/review`, practice ? { grade: g, practice: true } : { grade: g })
+      await api(`/flashcards/${card.id}/review`, practice ? { grade: g, practice: true, typed } : { grade: g, typed })
       setQueue((q) => {
         const rest = (q ?? []).slice(1)
         return g === 'again' ? [...rest, card] : rest
@@ -101,7 +105,7 @@ export default function Flashcards({ limit = 10, onFinish, practice }: { limit?:
     return (
       <Card className="space-y-3 text-center">
         <p className="text-lg font-semibold">{practice ? 'Chưa có từ nào trong nhóm này' : '🎉 Không có thẻ nào đến hạn'}</p>
-        <p className="text-sm text-slate-600">{practice ? 'Hãy chọn nhóm khác hoặc học thêm bài mới.' : 'Bạn đã ôn hết từ vựng của hôm nay.'}</p>
+        <p className="text-sm text-slate-600">{practice ? 'Hãy chọn nhóm khác hoặc học thêm bài mới.' : backlog > 0 ? `Bạn đã ôn đủ ${cap} thẻ hôm nay. Còn ${backlog} thẻ chờ sang ngày mai.` : 'Bạn đã ôn hết từ vựng của hôm nay.'}</p>
         {onFinish && <Btn onClick={onFinish}>Tiếp tục</Btn>}
       </Card>
     )
@@ -130,7 +134,7 @@ export default function Flashcards({ limit = 10, onFinish, practice }: { limit?:
           </>
         ) : (
           <>
-            <p className="text-sm text-emerald-700">Hôm nay bạn đã ôn hết thẻ đến hạn.</p>
+            <p className="text-sm text-emerald-700">{backlog > 0 ? `Bạn đã ôn đủ ${cap} thẻ hôm nay. Còn ${backlog} thẻ chờ sang ngày mai.` : 'Hôm nay bạn đã ôn hết thẻ đến hạn.'}</p>
             {onFinish && <Btn onClick={onFinish}>Tiếp tục</Btn>}
           </>
         )}

@@ -56,6 +56,21 @@ describe('ExerciseReview — làm lại câu sai của bài tập buổi trướ
     expect(onPassed).not.toHaveBeenCalled()
   })
 
+  it('có phần "Cách làm" ở đầu bài: nói rõ làm lại câu sai, cách trả lời, cần đúng 100%; mỗi câu có nhãn kiểu trả lời', async () => {
+    server({ [GET]: { body: { status: status(2), questions: Q } } })
+    render(<ExerciseReview sessionId={9} onPassed={() => {}} />)
+    const howto = await screen.findByTestId('exercise-howto')
+    expect(howto.textContent).toContain('Cách làm')
+    expect(howto.textContent).toContain('sai ở bài tập buổi 1 (2 câu)')
+    expect(howto.textContent).toContain('bấm vào một đáp án')
+    expect(howto.textContent).toContain('gõ từ còn thiếu')
+    expect(howto.textContent).toContain('đúng 100%')
+    expect(screen.getByTestId('exercise-kind').textContent).toBe('Chọn một đáp án đúng') // câu 1 là trắc nghiệm
+    fireEvent.click(screen.getByRole('button', { name: 'The waiter' }))
+    await screen.findByText('Can I see the ___, please?')
+    expect(screen.getByTestId('exercise-kind').textContent).toBe('Gõ từ còn thiếu vào chỗ ___') // câu 2 là điền từ
+    expect(screen.getByTestId('exercise-howto')).toBeTruthy() // vẫn hiện ở mọi câu
+  })
   it('đúng hết → nút Tiếp tục gọi onPassed; "Làm lại" tải lại các câu còn sai', async () => {
     const s = server({
       [GET]: [{ body: { status: status(1), questions: [Q[1]] } }, { body: { status: status(1, 1), questions: [Q[1]] } }],

@@ -1,4 +1,4 @@
-﻿import { Hono, type Context } from 'hono'
+import { Hono, type Context } from 'hono'
 import { checkPassword, endSession, isLoggedIn, requireAuth, startSession } from './auth'
 import { todayVN } from './dates'
 import type { Env } from './env'
@@ -497,11 +497,12 @@ app.get('/api/flashcards/practice', async (c) => {
  * practice = ôn tự do: chỉ "Quên" đổi lịch.
  */
 app.post('/api/flashcards/:id/review', async (c) => {
-  const body = await c.req.json<{ grade?: unknown; practice?: unknown }>().catch(() => ({ grade: undefined, practice: undefined }))
+  const body = await c.req.json<{ grade?: unknown; practice?: unknown; typed?: unknown }>().catch(() => ({ grade: undefined, practice: undefined, typed: undefined }))
   if (!isGrade(body.grade)) return c.json({ error: 'bad_request', message: 'Mức đánh giá không hợp lệ (Quên / Khó / Tốt / Dễ).' }, 400)
-  const r = await reviewCard(c.env.DB, Number(c.req.param('id')), body.grade, todayVN(), body.practice === true)
+  const typed = typeof body.typed === 'string' ? body.typed.slice(0, 200) : undefined // chữ người học viết lại từ (nếu có): máy chủ tự so với từ, sai thì ép thành Quên
+  const r = await reviewCard(c.env.DB, Number(c.req.param('id')), body.grade, todayVN(), body.practice === true, typed)
   if (!r.ok) return c.json({ error: 'not_found', message: 'Không tìm thấy từ vựng.' }, 404)
-  return c.json({ next: r.next, remaining_due: r.remaining_due })
+  return c.json({ next: r.next, remaining_due: r.remaining_due, forced_again: r.forced_again })
 })
 
 /** Kho từ vựng: ?q= tìm theo từ/nghĩa, ?filter=all|due|learned|learning, ?page= */

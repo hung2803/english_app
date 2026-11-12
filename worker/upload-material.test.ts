@@ -6,7 +6,7 @@ import { splitSegments, toBase64 } from './upload-material'
 import { createTestBucket } from './test-r2'
 import { createTestDb } from './test-db'
 import type { Env } from './env'
-import { QUIZ8 } from './test-fixtures'
+import { QUIZ8, READING } from './test-fixtures'
 
 const SECRET = 'test-secret-test-secret-test-secret'
 let env: Env
@@ -21,7 +21,7 @@ const PAGE = '<html><head><title>L</title></head><body>' + '<p>Can I have a coff
 const PDF = enc('%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF')
 
 const lessonJson = (title = 'From my document') => ({
-  title, excerpt: 'A short quote from the document.', summary_vi: 'Tóm tắt.', explanation_vi: 'Giải thích.',
+  title, excerpt: READING, summary_vi: 'Tóm tắt.', explanation_vi: 'Giải thích.',
   vocab: ['alpha', 'beta', 'gamma', 'delta', 'omega'].map((w) => ({ word: w, meaning_vi: 'nghĩa ' + w })),
   grammar: [{ point: 'Present simple', explanation_vi: 'Thói quen.' }],
   quiz: QUIZ8,
@@ -262,7 +262,7 @@ describe('chọn tài liệu tải lên và soạn bài', () => {
     await addFile('story.txt', enc('SECRET_BODY_TEXT ' + 'long text here. '.repeat(200)), 'text/plain', 'Story')
     const { material } = await begin()
     await choose(uploadIndex(material))
-    net({ lesson: () => Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ ...lessonJson(), excerpt: 'SECRET_BODY_TEXT ' + 'long text here. '.repeat(200) }) }] } }] }) })
+    net({ lesson: () => Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ ...lessonJson(), excerpt: 'SECRET_BODY_TEXT ' + READING + ' ' + 'long text here. '.repeat(200) }) }] } }] }) })
     const { lesson } = await json(await compose())
     expect(lesson.excerpt.split(/\s+/).length).toBeLessThanOrEqual(80)
     const stored = (await db.prepare('SELECT material_json, lesson_json FROM sessions WHERE seq = 1').first<any>())

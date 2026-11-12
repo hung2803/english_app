@@ -5,7 +5,7 @@ import { todayVN } from './dates'
 import { createTestBucket } from './test-r2'
 import { createTestDb } from './test-db'
 import type { Env } from './env'
-import { QUIZ8 } from './test-fixtures'
+import { QUIZ8, READING } from './test-fixtures'
 
 const SECRET = 'test-secret-test-secret-test-secret'
 let env: Env
@@ -18,7 +18,7 @@ const A = { type: 'article', title: 'AI A', url: 'https://example.com/a', why_vi
 const B = { type: 'article', title: 'AI B', url: 'https://example.com/b', why_vi: 'b', excerpt: 'b' }
 const PAGE = '<html><head><title>Page</title></head><body>' + '<p>Can I have a coffee please? Yes of course. </p>'.repeat(40) + '</body></html>'
 const LESSON = {
-  title: 'Lesson', excerpt: 'quote', summary_vi: 's', explanation_vi: 'e',
+  title: 'Lesson', excerpt: READING, summary_vi: 's', explanation_vi: 'e',
   vocab: ['a1', 'b2', 'c3', 'd4', 'e5'].map((w) => ({ word: w, meaning_vi: 'm' })),
   grammar: [{ point: 'p', explanation_vi: 'e' }],
   quiz: QUIZ8,

@@ -4,7 +4,8 @@ import { AiError } from './errors'
 import { geminiJson, type Part } from './gemini'
 import { isSafeUrl, readLimited, visibleText, youtubeId } from './link-check'
 import type { MaterialOption } from './materials'
-import { normalizeQuiz, QUIZ_SIZE, type QuizItem } from './quiz'
+import { groundQuiz, MIN_READING_WORDS, readingWords } from './lesson-grounding'
+import { MIN_QUIZ, normalizeQuiz, QUIZ_SIZE, type QuizItem } from './quiz'
 import { clipWords } from './text'
 import { splitSegments, toBase64 } from './upload-material'
 
@@ -50,6 +51,14 @@ export interface Lesson {
   quiz: QuizItem[]
   /** lý do chuyển sang bài AI tự viết (nếu có), tiếng Việt */
   notice_vi?: string
+}
+
+/** Lỗi do NỘI DUNG AI soạn chưa đạt (thiếu phần, quiz không bám bài…): thử lại có thể ổn, nên composeLesson tự thử lại một lần. */
+export class LessonQualityError extends AiError {
+  constructor(message: string) {
+    super('other', message)
+    this.name = 'LessonQualityError'
+  }
 }
 
 export interface ComposeContext {
@@ -101,7 +110,9 @@ const SHAPE = `{
   ]
 }`
 
-const RULES = (c: ComposeContext) => `The learner is Vietnamese, CEFR ${c.level}; week topic: "${c.topic}"; the whole session lasts 30 minutes.
+/** Mẫu JSON khi AI TỰ VIẾT bài: `excerpt` là TOÀN BỘ bài đọc (không phải trích 80 từ) và không có `reading`. */
+const SHAPE_AI = SHAPE.replace(/ {2}"excerpt": "[^\n]*\n/, '  "excerpt": "the FULL reading text you wrote (at least 150 words), every sentence the learner will read",\n').replace(/ {2}"reading": "[^\n]*\n/, '')
+const RULES = (c: ComposeContext, ai = false) => `The learner is Vietnamese, CEFR ${c.level}; week topic: "${c.topic}"; the whole session lasts 30 minutes.
 Produce 10-12 useful vocabulary items (words or phrases that actually appear in the material or your reading text, suited to ${c.level}), each with an English example sentence, and 2-3 grammar points seen in the text, each with an example.
 Write "explanation_vi" as 5-8 sentences that walk the learner through the text paragraph by paragraph.
 All explanations and meanings are in Vietnamese; examples are in English at the learner's level. Do not reproduce the source text beyond the short excerpt.
@@ -109,9 +120,10 @@ Also write the end-of-lesson quiz: exactly ${QUIZ_SIZE} items, 5 "mcq" and 3 "fi
 - "mcq": 4 different options, "answer" is the zero-based index of the single correct option.
 - "fill": ONE sentence containing exactly one "___" blank; "answer" is one word or a short phrase (max 3 words) that clearly fits.
 - Every item must be answerable from this lesson (its vocabulary, grammar, summary or excerpt) and suited to ${c.level}; no trick questions; no two items about the same thing.
+- Questions about the text must be answerable ONLY from the reading text the learner sees (what you put in "reading" / "excerpt" in this same JSON). NEVER ask about details that are not written in that text (places, transport, times, people, numbers). Vocabulary and grammar questions may only use this lesson's own vocabulary and grammar points.
 - "explanation_vi" explains the correct answer in Vietnamese; "word" is the related vocab word of this lesson when there is one.
 Return ONLY JSON in exactly this shape:
-${SHAPE}`
+${ai ? SHAPE_AI : SHAPE}`
 
 type PromptMode =
   | { kind: 'text'; text: string }
@@ -142,7 +154,7 @@ ${RULES(c)}`
   if (mode.kind === 'video' && src) {
     return `Build a 30-minute English lesson from this YouTube video ("${src.title}"), using its spoken English / captions.\n${RULES(c)}`
   }
-  return `Write your OWN original English reading text (250-350 words, CEFR ${c.level}) about "${c.topic}", then build the lesson on it. Put the whole reading text in "excerpt" (this one time it may be longer than 80 words) and omit "reading".\n${RULES(c)}`
+  return `Write your OWN original English reading text (250-350 words, at least 150; CEFR ${c.level}) about "${c.topic}", then build the lesson on it. Put the whole reading text in "excerpt" (this one time it may be longer than 80 words) and omit "reading".\n${RULES(c, true)}`
 }
 
 const str = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '')
@@ -180,10 +192,10 @@ export function normalizeLesson(raw: unknown, source: LessonSource, notice_vi?: 
   }
 
   if (!title || !excerpt || !summary_vi || !explanation_vi || vocab.length < MIN_VOCAB || grammar.length < 1) {
-    throw new AiError('other', 'Bài AI soạn thiếu nội dung')
+    throw new LessonQualityError('Bài AI soạn thiếu nội dung')
   }
   const quiz = normalizeQuiz(r.quiz, vocab.map((v) => v.word))
-  if (!quiz) throw new AiError('other', 'Quiz AI soạn không đủ câu hợp lệ')
+  if (!quiz) throw new LessonQualityError('Quiz AI soạn không đủ câu hợp lệ')
   return {
     title, source, excerpt, ...(reading && !source.ai_written ? { reading } : {}), ...(goals_vi.length ? { goals_vi } : {}), ...(task ? { task } : {}),
     summary_vi, explanation_vi, vocab, grammar, quiz, ...(notice_vi ? { notice_vi } : {}) }
@@ -209,7 +221,7 @@ async function fetchSourceText(url: string, timeoutMs: number): Promise<string> 
  * Khi không có tài liệu (fallback), không đọc được trang, hoặc video không dùng được → AI tự viết bài đọc và ghi rõ `ai_written`.
  * Lỗi từ chối/quá hạn của API được ném ra (không chuyển sang fallback vì cũng sẽ bị từ chối).
  */
-export async function composeLesson(env: Env, c: ComposeContext, opts: { budgetMs?: number } = {}): Promise<Lesson> {
+async function composeOnce(env: Env, c: ComposeContext, opts: { budgetMs?: number } = {}): Promise<Lesson> {
   const t0 = Date.now()
   const budget = opts.budgetMs ?? COMPOSE_BUDGET_MS
   const left = () => Math.max(1_000, budget - (Date.now() - t0))
@@ -281,4 +293,31 @@ export async function composeLesson(env: Env, c: ComposeContext, opts: { budgetM
   if (text.length < MIN_SOURCE_CHARS) return writeByAi('Không đọc được tài liệu đã chọn nên AI tự viết bài đọc.')
   const raw = await call([{ text: buildLessonPrompt(c, { kind: 'text', text }) }])
   return normalizeLesson(raw, { type: src.type, url: src.url, title: src.title, ai_written: false })
+}
+
+/** Kiểm tra bài đã soạn: bài AI viết đủ dài (lượt đầu) và quiz chỉ còn các câu bám sát bài (≥ MIN_QUIZ câu). */
+function ensureGrounded(l: Lesson, strictLength: boolean): Lesson {
+  if (strictLength && l.source.ai_written && readingWords(l) < MIN_READING_WORDS) throw new LessonQualityError('Bài đọc AI viết quá ngắn')
+  const quiz = groundQuiz(l)
+  if (quiz.length < MIN_QUIZ) throw new LessonQualityError('Quiz AI soạn không bám sát bài đọc')
+  return { ...l, quiz }
+}
+
+/**
+ * Soạn bài (xem composeOnce) rồi kiểm tra chất lượng: quiz phải bám sát bài đọc người học thấy.
+ * Bài chưa đạt thì thử lại MỘT lần nếu còn đủ thời gian (lần thử lại chỉ cần quiz bám bài, không bắt buộc bài đọc đủ dài).
+ */
+export async function composeLesson(env: Env, c: ComposeContext, opts: { budgetMs?: number } = {}): Promise<Lesson> {
+  const t0 = Date.now()
+  const budget = opts.budgetMs ?? COMPOSE_BUDGET_MS
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return ensureGrounded(await composeOnce(env, c, { budgetMs: Math.max(1_000, budget - (Date.now() - t0)) }), attempt === 1)
+    } catch (e) {
+      // nội dung chưa đạt, hoặc AI trả JSON hỏng (lỗi thoáng qua): thử lại một lần. Lỗi API (429/503/khóa sai/quá hạn) thì không.
+      const retryable = e instanceof LessonQualityError || (e instanceof AiError && e.kind === 'other' && /JSON/.test(e.message))
+      if (retryable && attempt === 1 && budget - (Date.now() - t0) > 25_000) continue
+      throw e
+    }
+  }
 }

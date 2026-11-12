@@ -18,7 +18,7 @@ interface VocabPage {
   matched: number
   page: number
   page_size: number
-  stats: { total: number; learned: number; due: number }
+  stats: { total: number; learned: number; due: number; quota?: { cap: number; done: number; due: number; shown: number; backlog: number } }
 }
 
 type Filter = 'all' | 'due' | 'learning' | 'learned'
@@ -98,9 +98,9 @@ export default function Vocab() {
 
       <Card className="mb-3 flex items-center justify-between gap-3">
         <p className="text-sm text-slate-700">
-          {stats.due > 0 ? <>Có <strong>{stats.due}</strong> từ đến hạn ôn hôm nay.</> : 'Hôm nay không có từ nào đến hạn ôn.'}
+          {stats.due === 0 ? 'Hôm nay không có từ nào đến hạn ôn.' : (stats.quota?.shown ?? stats.due) === 0 ? <>Bạn đã ôn đủ <strong>{stats.quota?.cap}</strong> thẻ hôm nay. Còn <strong>{stats.quota?.backlog}</strong> thẻ chờ ngày mai.</> : <>Có <strong>{stats.quota?.shown ?? stats.due}</strong> từ cần ôn hôm nay.{(stats.quota?.backlog ?? 0) > 0 && <span className="text-slate-500"> Mỗi ngày tối đa {stats.quota?.cap} thẻ; {stats.quota?.backlog} thẻ chờ ngày sau.</span>}</>}
         </p>
-        {stats.due > 0 ? <Link to="/review"><Btn>Ôn ngay</Btn></Link> : <Btn disabled>Ôn ngay</Btn>}
+        {(stats.quota?.shown ?? stats.due) > 0 ? <Link to="/review"><Btn>Ôn ngay</Btn></Link> : <Btn disabled>Ôn ngay</Btn>}
       </Card>
 
       <Card className="mb-3 space-y-2">

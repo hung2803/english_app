@@ -1,4 +1,4 @@
-﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import app from './index'
 import { makeToken } from './auth'
 import { todayVN } from './dates'
@@ -6,7 +6,7 @@ import { BANK } from './placement-bank'
 import { saveProposal } from './adjustment-store'
 import { createTestDb } from './test-db'
 import type { Env } from './env'
-import { QUIZ8 } from './test-fixtures'
+import { QUIZ8, READING } from './test-fixtures'
 
 const SECRET = 'test-secret-test-secret-test-secret'
 let env: Env
@@ -15,7 +15,7 @@ let db: D1Database
 const A = { type: 'article', title: 'A', url: 'https://example.com/a', why_vi: 'a', excerpt: 'a' }
 const B = { type: 'article', title: 'B', url: 'https://example.com/b', why_vi: 'b', excerpt: 'b' }
 const LESSON = {
-  title: 'T', excerpt: 'quote', summary_vi: 's', explanation_vi: 'e',
+  title: 'T', excerpt: READING, summary_vi: 's', explanation_vi: 'e',
   vocab: ['a1', 'b2', 'c3', 'd4', 'e5'].map((w) => ({ word: w, meaning_vi: 'm' })),
   grammar: [{ point: 'p', explanation_vi: 'e' }],
   quiz: QUIZ8,

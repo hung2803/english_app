@@ -1,4 +1,4 @@
-﻿// @vitest-environment jsdom
+// @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -108,7 +108,7 @@ describe('Flashcards — ôn thẻ', () => {
     showMeaning()
     grade('Quên')
     await waitFor(() => expect(s.count('POST /flashcards/4/review')).toBe(1))
-    expect([1, 2, 3, 4].map((i) => s.bodies(`POST /flashcards/${i}/review`)[0])).toEqual([{ grade: 'hard' }, { grade: 'good' }, { grade: 'easy' }, { grade: 'again' }])
+    expect([1, 2, 3, 4].map((i) => s.bodies(`POST /flashcards/${i}/review`)[0])).toEqual([{ grade: 'hard', typed: 'a' }, { grade: 'good', typed: 'b' }, { grade: 'easy', typed: 'c' }, { grade: 'again', typed: 'd' }])
   })
 
   it('đánh giá xong → sang thẻ kế tiếp, mặt sau úp lại, tiến độ tăng', async () => {
@@ -198,7 +198,7 @@ describe('Flashcards — ôn thẻ', () => {
     expect(screen.getByText('Đã ôn 0/2')).toBeTruthy()
     fireEvent.click(screen.getByText('Thử lại'))
     await waitFor(() => expect(word()).toBe('b'))
-    expect(s.bodies('POST /flashcards/1/review')).toEqual([{ grade: 'easy' }, { grade: 'easy' }])
+    expect(s.bodies('POST /flashcards/1/review')).toEqual([{ grade: 'easy', typed: 'a' }, { grade: 'easy', typed: 'a' }])
   })
 
   it('đang gửi: các nút mức bị khóa (không chấm hai lần)', async () => {
@@ -372,7 +372,7 @@ describe('Kho từ vựng — trang /vocab', () => {
   it('có từ đến hạn → nút "Ôn ngay" dẫn tới /review; không có thì khóa nút', async () => {
     server({ 'GET /vocab': page([item(1, 'a')], { stats: { total: 1, learned: 0, due: 5 } }) })
     mount()
-    await screen.findByText((_, el) => el?.tagName === 'P' && el.textContent === 'Có 5 từ đến hạn ôn hôm nay.')
+    await screen.findByText((_, el) => el?.tagName === 'P' && el.textContent === 'Có 5 từ cần ôn hôm nay.')
     expect(screen.getByText('Ôn ngay').closest('a')!.getAttribute('href')).toBe('/review')
     cleanup()
     server({ 'GET /vocab': page([item(1, 'a')]) })
@@ -381,6 +381,20 @@ describe('Kho từ vựng — trang /vocab', () => {
     expect((screen.getByText('Ôn ngay') as HTMLButtonElement).disabled).toBe(true)
   })
 
+  it('có nhiều từ đến hạn hơn trần ngày: hiện số cần ôn hôm nay và số thẻ chờ ngày sau', async () => {
+    server({ 'GET /vocab': page([item(1, 'a')], { stats: { total: 60, learned: 0, due: 55, quota: { cap: 20, done: 0, due: 55, shown: 20, backlog: 35 } } }) })
+    mount()
+    await screen.findByText((_, el) => el?.tagName === 'P' && (el.textContent ?? '').startsWith('Có 20 từ cần ôn hôm nay.'))
+    expect(screen.getByText(/Mỗi ngày tối đa 20 thẻ; 35 thẻ chờ ngày sau/)).toBeTruthy()
+    expect(screen.getByText('Ôn ngay').closest('a')!.getAttribute('href')).toBe('/review')
+  })
+
+  it('đã ôn đủ trần hôm nay: khóa nút "Ôn ngay" và báo còn bao nhiêu thẻ chờ ngày mai', async () => {
+    server({ 'GET /vocab': page([item(1, 'a')], { stats: { total: 60, learned: 0, due: 30, quota: { cap: 20, done: 20, due: 30, shown: 0, backlog: 30 } } }) })
+    mount()
+    await screen.findByText((_, el) => el?.tagName === 'P' && (el.textContent ?? '').includes('Bạn đã ôn đủ 20 thẻ hôm nay. Còn 30 thẻ chờ ngày mai.'))
+    expect((screen.getByText('Ôn ngay') as HTMLButtonElement).disabled).toBe(true)
+  })
   it('tìm kiếm: chờ ngừng gõ rồi mới gọi; gửi đúng từ khóa (không cần dấu)', async () => {
     const s = server({ 'GET /vocab': [page([item(1, 'menu'), item(2, 'bill')]), page([item(1, 'menu')], { matched: 1 })] })
     mount()

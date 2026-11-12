@@ -1,4 +1,4 @@
-﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import app from './index'
 import { makeToken } from './auth'
 import { addDays, todayVN } from './dates'
@@ -223,11 +223,12 @@ describe('liên thông với quiz', () => {
     const stored = JSON.parse((await db.prepare('SELECT lesson_json FROM sessions WHERE seq = 1').first<any>()).lesson_json).quiz as { type: string; answer: number | string; word?: string }[]
     // sai đúng câu đầu tiên có từ liên quan
     const answers = stored.map((q, i) => (i === 0 ? (q.type === 'mcq' ? ((q.answer as number) + 1) % 4 : 'wrong') : q.answer))
+    await db.prepare('UPDATE vocab SET typed_streak = 2, learned = 1 WHERE lower(word) = lower(?)').bind(stored[0].word!).run() // đang gần thuộc: sai quiz phải xóa chuỗi viết đúng
     const r = await call(`/api/sessions/${await sid(1)}/quiz`, { answers })
     expect(r.status).toBe(200)
     const w = stored[0].word!
     expect(await vocab()).toHaveLength(5)
-    expect((await db.prepare('SELECT * FROM vocab WHERE lower(word) = lower(?)').bind(w).first<any>())).toMatchObject({ due_date: TODAY, wrong_count: 1 })
+    expect((await db.prepare('SELECT * FROM vocab WHERE lower(word) = lower(?)').bind(w).first<any>())).toMatchObject({ due_date: TODAY, wrong_count: 1, typed_streak: 0, learned: 0 })
     // các từ làm đúng vẫn hẹn ngày mai
     const others = (await db.prepare('SELECT due_date FROM vocab WHERE lower(word) != lower(?)').bind(w).all<any>()).results
     expect(others.every((o) => o.due_date === TOMORROW)).toBe(true)

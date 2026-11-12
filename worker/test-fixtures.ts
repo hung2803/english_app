@@ -12,11 +12,31 @@ export const QUIZ8 = [
   { type: 'fill', question: 'The ___ is friendly and fast.', answer: 'waiter', explanation_vi: 'Bồi bàn: waiter.', word: 'waiter' },
 ]
 
+/** Quiz 8 câu chỉ gồm câu hỏi từ vựng/ngôn ngữ (không hỏi nội dung bài đọc) — dùng khi bài đọc mẫu không liên quan tới quiz. */
+export const QUIZ_LANG = [
+  QUIZ8[2],
+  QUIZ8[3],
+  { type: 'fill', question: 'Can I see the ___, please?', answer: 'menu', explanation_vi: 'Xem thực đơn: the menu.', word: 'menu' },
+  { type: 'fill', question: 'I would like to ___ a pizza.', answer: 'order', explanation_vi: 'Gọi món: order.', word: 'order' },
+  { type: 'fill', question: 'The ___ is friendly and fast.', answer: 'waiter', explanation_vi: 'Bồi bàn: waiter.', word: 'waiter' },
+  { type: 'fill', question: 'Could we have the ___, please?', answer: 'bill', explanation_vi: 'Xin hóa đơn: the bill.', word: 'bill' },
+  { type: 'fill', question: 'Please leave a ___ for the waiter.', answer: 'tip', explanation_vi: 'Tiền boa: tip.', word: 'tip' },
+  { type: 'fill', question: 'What would you like to ___?', answer: 'order', explanation_vi: 'Gọi món: order.', word: 'order' },
+]
+
+/** Bài đọc mẫu (>100 từ) chứa nội dung mà QUIZ8 hỏi: bill, waiter, menu, order, tip… để quiz "bám sát bài". */
+export const READING =
+  'Tom and Anna go to a small restaurant for dinner. The waiter is friendly and fast. He brings the menu and says hello. ' +
+  'Anna wants to order a pizza and Tom wants to order soup. They can see many food and drinks on the menu. The pizza is hot and very good. ' +
+  'After dinner, Tom asks for the bill, please. The bill is not expensive. Anna says a tip is extra money for service, ' +
+  'and Tom leaves a small tip for the waiter. The waiter says thank you and smiles. It is a nice evening for Tom and Anna, ' +
+  'and they want to come back to this restaurant again next week with their friends and family.'
+
 /** Bài học hợp lệ (đủ quiz) cho test, ghi đè từng trường khi cần. */
 export function lessonJson(over: Record<string, unknown> = {}) {
   return {
     title: 'Ordering food and drinks',
-    excerpt: 'Can I have a coffee, please?',
+    excerpt: READING,
     summary_vi: 'Bài nói về cách gọi đồ ăn thức uống.',
     explanation_vi: 'Người nói gọi cà phê một cách lịch sự.',
     vocab: [

@@ -1,4 +1,4 @@
-﻿import type { Env } from './env'
+import type { Env } from './env'
 import { addDays, todayVN } from './dates'
 import { composeLesson, type Lesson } from './lesson'
 import { gradeQuiz, publicQuiz, validateAnswers, wrongWords, type PublicQuizItem, type QuizResult } from './quiz'
@@ -265,7 +265,7 @@ export async function submitQuiz(db: D1Database, sessionId: number, answers: unk
       // đã có thì đặt lại như bấm "Quên": đến hạn hôm nay, học lại từ đầu, giảm độ dễ, ghi nhận một lần sai
       db
         .prepare(
-          `UPDATE vocab SET due_date = ?, interval_days = 0, reps = 0, learned = 0, ease = MAX(1.3, ease - 0.2), wrong_count = wrong_count + 1
+          `UPDATE vocab SET due_date = ?, interval_days = 0, reps = 0, learned = 0, typed_streak = 0, ease = MAX(1.3, ease - 0.2), wrong_count = wrong_count + 1
            WHERE lower(word) = lower(?) AND ${mine}`,
         )
         .bind(today, v.word, sessionId, resultJson),

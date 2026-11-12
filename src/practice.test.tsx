@@ -1,4 +1,4 @@
-﻿// @vitest-environment jsdom
+// @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import Flashcards from './components/Flashcards'
@@ -40,7 +40,7 @@ describe('Flashcards — ôn tự do', () => {
     showAndType('later1')
     fireEvent.click(screen.getByRole('button', { name: 'Tốt' }))
     expect(await screen.findByText('✅ Xong lượt ôn!')).toBeTruthy()
-    expect(s.calls.find((c) => c.key === 'POST /flashcards/5/review')!.body).toEqual({ grade: 'good', practice: true })
+    expect(s.calls.find((c) => c.key === 'POST /flashcards/5/review')!.body).toEqual({ grade: 'good', practice: true, typed: 'later1' })
     // ôn tự do: luôn cho ôn thêm, không nói "đến hạn"
     expect(screen.getByRole('button', { name: 'Ôn thêm 10 từ khác' })).toBeTruthy()
     expect(screen.queryByText(/thẻ đến hạn/)).toBeNull()
@@ -59,6 +59,6 @@ describe('Flashcards — ôn tự do', () => {
     showAndType('later1')
     fireEvent.click(screen.getByRole('button', { name: 'Dễ' }))
     await waitFor(() => expect(s.calls.some((c) => c.key === 'POST /flashcards/5/review')).toBe(true))
-    expect(s.calls.find((c) => c.key === 'POST /flashcards/5/review')!.body).toEqual({ grade: 'easy' })
+    expect(s.calls.find((c) => c.key === 'POST /flashcards/5/review')!.body).toEqual({ grade: 'easy', typed: 'later1' })
   })
 })

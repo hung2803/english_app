@@ -122,7 +122,7 @@ describe('GET /api/flashcards/due — thẻ đến hạn', () => {
   it('cần đăng nhập', async () => expect((await call('/api/flashcards/due', undefined, false)).status).toBe(401))
 
   it('kho trống → không có thẻ', async () => {
-    expect(await json(await call('/api/flashcards/due'))).toEqual({ cards: [], total_due: 0 })
+    expect(await json(await call('/api/flashcards/due'))).toMatchObject({ cards: [], total_due: 0, backlog: 0, daily_cap: 20, done_today: 0 })
   })
 
   it('chỉ trả thẻ đến hạn (hạn ≤ hôm nay); thẻ hẹn ngày mai thì chưa', async () => {
@@ -142,17 +142,18 @@ describe('GET /api/flashcards/due — thẻ đến hạn', () => {
     expect((await json(await call('/api/flashcards/due'))).cards.map((c: any) => c.word)).toEqual(['a', 'b', 'c'])
   })
 
-  it('mặc định 10 thẻ (≈ 5 phút), total_due cho biết còn bao nhiêu', async () => {
-    for (let i = 0; i < 25; i++) await addWord('w' + i)
+  it('mặc định 10 thẻ (≈ 5 phút), total_due cho biết còn bao nhiêu cần ôn hôm nay (đã tính trần 20/ngày)', async () => {
+    for (let i = 0; i < 15; i++) await addWord('w' + i)
     const r = await json(await call('/api/flashcards/due'))
     expect(r.cards).toHaveLength(10)
-    expect(r.total_due).toBe(25)
+    expect(r.total_due).toBe(15)
+    expect(r.backlog).toBe(0)
   })
 
   it('?limit= tùy chỉnh, tối đa 50; giá trị rác dùng mặc định', async () => {
     for (let i = 0; i < 60; i++) await addWord('w' + i)
     expect((await json(await call('/api/flashcards/due?limit=3'))).cards).toHaveLength(3)
-    expect((await json(await call('/api/flashcards/due?limit=999'))).cards).toHaveLength(50)
+    expect((await json(await call('/api/flashcards/due?limit=999'))).cards).toHaveLength(20) // chặn bởi trần 20 thẻ/ngày (giới hạn kỹ thuật 50)
     expect((await json(await call('/api/flashcards/due?limit=abc'))).cards).toHaveLength(10)
     expect((await json(await call('/api/flashcards/due?limit=-5'))).cards).toHaveLength(1)
   })
@@ -260,7 +261,7 @@ describe('GET /api/vocab — kho từ vựng', () => {
     await addWord('c', { due: TODAY })
     await addWord('d', { due: addDays(TODAY, -2) })
     await addWord('e', { due: addDays(TODAY, 3) })
-    expect((await json(await call('/api/vocab'))).stats).toEqual({ total: 5, learned: 2, due: 2 })
+    expect((await json(await call('/api/vocab'))).stats).toMatchObject({ total: 5, learned: 2, due: 2, quota: { cap: 20, done: 0, due: 2, shown: 2, backlog: 0 } })
   })
 
   it('mới thêm hiện trước; mỗi từ có đủ thông tin', async () => {
@@ -331,7 +332,7 @@ describe('GET /api/vocab — kho từ vựng', () => {
     it('matched đếm theo bộ lọc, stats vẫn là của cả kho', async () => {
       const r = await json(await call('/api/vocab?filter=due'))
       expect(r.matched).toBe(2)
-      expect(r.stats).toEqual({ total: 4, learned: 1, due: 2 })
+      expect(r.stats).toMatchObject({ total: 4, learned: 1, due: 2 })
     })
   })
 
