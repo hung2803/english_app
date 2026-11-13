@@ -32,15 +32,20 @@ export interface SessionInfo {
   level: string
 }
 
+/** Một truy vấn duy nhất (kèm chủ đề tuần và mức của lộ trình): mỗi lần gọi D1 tốn một vòng đi-về nên gộp lại cho nhanh. */
 export async function loadSession(db: D1Database, id: number): Promise<SessionInfo | null> {
-  const row = await db
-    .prepare('SELECT id, plan_id, week_no, seq, scheduled_date, status, material_json, lesson_json, result_json, score, completed_date, quiz_mastered, first_score FROM sessions WHERE id = ?')
+  const r = await db
+    .prepare(
+      `SELECT s.id, s.plan_id, s.week_no, s.seq, s.scheduled_date, s.status, s.material_json, s.lesson_json, s.result_json, s.score, s.completed_date, s.quiz_mastered, s.first_score,
+              (SELECT topic FROM plan_weeks w WHERE w.plan_id = s.plan_id AND w.week_no = s.week_no) AS topic,
+              (SELECT level FROM plans p WHERE p.id = s.plan_id) AS level
+       FROM sessions s WHERE s.id = ?`,
+    )
     .bind(id)
-    .first<SessionRow>()
-  if (!row) return null
-  const w = await db.prepare('SELECT topic FROM plan_weeks WHERE plan_id = ? AND week_no = ?').bind(row.plan_id, row.week_no).first<{ topic: string }>()
-  const p = await db.prepare('SELECT level FROM plans WHERE id = ?').bind(row.plan_id).first<{ level: string }>()
-  return { row, topic: w?.topic ?? '', level: p?.level ?? '' }
+    .first<SessionRow & { topic: string | null; level: string | null }>()
+  if (!r) return null
+  const { topic, level, ...row } = r
+  return { row, topic: topic ?? '', level: level ?? '' }
 }
 
 /** Bài học gửi cho client: chưa nộp quiz thì KHÔNG kèm đáp án/giải thích/từ liên quan của quiz. */
@@ -205,9 +210,9 @@ export async function composeSession(env: Env, sessionId: number): Promise<Compo
     upload: chosen?.type === 'upload' && chosen.upload_id ? { id: chosen.upload_id, partIndex: prior?.count ?? 0, usedTitles: prior?.titles ?? [] } : undefined,
     fallbackNotice: m.fallback_reason === 'search_error' ? NOTICE_SEARCH_ERROR : NOTICE_NO_RESULTS,
   })
-  // Lưu bài VÀ nạp từ vựng của bài vào kho flashcard trong MỘT giao dịch:
+  // Lưu bài và danh sách từ để người học lựa chọn trong cùng một giao dịch:
   // - từ đã có trong kho (không phân biệt hoa thường) thì giữ nguyên, không trùng, không mất tiến độ ôn;
-  // - từ mới hẹn ôn lần đầu vào NGÀY MAI (vừa học hôm nay); chỉ yêu cầu thắng cuộc đua mới nạp.
+  // - từ mới ở trạng thái available, chưa vào lịch ôn; chỉ yêu cầu thắng cuộc đua mới nạp.
   const lessonJson = JSON.stringify(lesson)
   const today = todayVN()
   const firstReview = addDays(today, 1)
@@ -216,8 +221,8 @@ export async function composeSession(env: Env, sessionId: number): Promise<Compo
     ...lesson.vocab.map((v) =>
       env.DB
         .prepare(
-          `INSERT OR IGNORE INTO vocab (word, pos, meaning, example, session_id, due_date, created_at)
-           SELECT ?, ?, ?, ?, ?, ?, ? WHERE (SELECT lesson_json FROM sessions WHERE id = ?) = ?`,
+          `INSERT OR IGNORE INTO vocab (word, pos, meaning, example, session_id, due_date, created_at, learning_state)
+           SELECT ?, ?, ?, ?, ?, ?, ?, 'available' WHERE (SELECT lesson_json FROM sessions WHERE id = ?) = ?`,
         )
         .bind(v.word, v.pos ?? null, v.meaning_vi, v.example ?? null, sessionId, firstReview, today, sessionId, lessonJson),
     ),
@@ -258,14 +263,14 @@ export async function submitQuiz(db: D1Database, sessionId: number, answers: unk
       // chưa có trong kho thì thêm (từ vựng của bài chưa được nạp tự động)
       db
         .prepare(
-          `INSERT OR IGNORE INTO vocab (word, pos, meaning, example, session_id, due_date, created_at)
-           SELECT ?, ?, ?, ?, ?, ?, ? WHERE ${mine}`,
+          `INSERT OR IGNORE INTO vocab (word, pos, meaning, example, session_id, due_date, created_at, learning_state)
+           SELECT ?, ?, ?, ?, ?, ?, ?, 'available' WHERE ${mine}`,
         )
         .bind(v.word, v.pos ?? null, v.meaning_vi, v.example ?? null, sessionId, today, today, sessionId, resultJson),
       // đã có thì đặt lại như bấm "Quên": đến hạn hôm nay, học lại từ đầu, giảm độ dễ, ghi nhận một lần sai
       db
         .prepare(
-          `UPDATE vocab SET due_date = ?, interval_days = 0, reps = 0, learned = 0, typed_streak = 0, ease = MAX(1.3, ease - 0.2), wrong_count = wrong_count + 1
+          `UPDATE vocab SET due_date = ?, interval_days = 0, reps = 0, learned = 0, typed_streak = 0, mastery_started_on = NULL, last_success_on = NULL, recognized_on = NULL, ease = MAX(1.3, ease - 0.2), wrong_count = wrong_count + 1
            WHERE lower(word) = lower(?) AND ${mine}`,
         )
         .bind(today, v.word, sessionId, resultJson),

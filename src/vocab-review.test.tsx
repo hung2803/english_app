@@ -39,106 +39,47 @@ const res = (stage: number, o: Record<string, unknown>) => ({
   results: [{ word: 'order', meaning: 'gọi món', correct: true }, { word: 'menu', meaning: 'thực đơn', correct: false }], ...o,
 })
 
-describe('VocabReview — ôn từ vựng bài trước (3 giai đoạn)', () => {
-  it('giai đoạn 1: trả lời hết → gửi đáp án; có từ sai: phải làm lại giai đoạn từ đầu, chưa cho bắt đầu bài', async () => {
-    const s = server({ [GET]: { body: { status: st(1), questions: MCQ } }, [POST]: { body: res(1, {}) } })
-    const onPassed = vi.fn()
-    render(<VocabReview sessionId={7} onPassed={onPassed} />)
-    expect(await screen.findByText(/Giai đoạn 1\/3: Trắc nghiệm/)).toBeTruthy()
-    expect((await screen.findByTestId('review-prompt')).textContent).toBe('order')
-    fireEvent.click(screen.getByRole('button', { name: 'gọi món' }))
-    expect((await screen.findByTestId('review-prompt')).textContent).toBe('thực đơn')
-    fireEvent.click(screen.getByRole('button', { name: 'tip' })) // chọn sai
-    expect(await screen.findByText('Đúng 1/2')).toBeTruthy()
-    expect(s.calls.find((c) => c.key === POST)!.body).toEqual({ answers: [{ word: 'order', dir: 'en_vi', choice: 'gọi món' }, { word: 'menu', dir: 'vi_en', choice: 'tip' }] })
-    expect(screen.getByText(/phải làm lại giai đoạn 1 từ đầu/)).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Làm lại giai đoạn 1' })).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Bắt đầu bài học' })).toBeNull()
-    expect(onPassed).not.toHaveBeenCalled()
-  })
 
-  it('đúng 100% giai đoạn 1 → báo qua giai đoạn, nút sang giai đoạn 2 (chưa mở bài)', async () => {
-    const s = server({
-      [GET]: [{ body: { status: st(1), questions: [MCQ[0]] } }, { body: { status: st(2, 1), questions: [{ word: 'order', kind: 'type', prompt: 'gọi món' }] } }],
-      [POST]: { body: res(1, { cleared: true, next_stage: 2, results: [{ word: 'order', meaning: 'gọi món', correct: true }] }) },
-    })
-    render(<VocabReview sessionId={7} onPassed={() => {}} />)
-    fireEvent.click(await screen.findByRole('button', { name: 'gọi món' }))
-    expect(await screen.findByText('✅ Qua giai đoạn 1/3!')).toBeTruthy()
-    expect(screen.getByText(/giai đoạn 2\/3 — Gõ từ tiếng Anh/)).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Bắt đầu bài học' })).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Sang giai đoạn 2' }))
-    expect(await screen.findByText(/Giai đoạn 2\/3: Gõ từ tiếng Anh/)).toBeTruthy()
-    expect(s.calls.filter((c) => c.key === GET)).toHaveLength(2)
-  })
-
-  it('giai đoạn 2: gõ từ rồi nhấn Enter/Nộp; chỉ hiện nghĩa tiếng Việt, không có gợi ý chữ cái', async () => {
-    const s = server({
-      [GET]: { body: { status: st(2, 1), questions: [{ word: 'order', kind: 'type', prompt: 'gọi món' }] } },
-      [POST]: { body: res(2, { cleared: true, next_stage: 3, results: [{ word: 'order', meaning: 'gọi món', correct: true }] }) },
-    })
-    render(<VocabReview sessionId={7} onPassed={() => {}} />)
-    expect((await screen.findByTestId('review-prompt')).textContent).toBe('gọi món')
-    expect(screen.queryByText(/Gợi ý/)).toBeNull() // không gợi ý chữ cái
-    fireEvent.change(screen.getByLabelText('Đáp án'), { target: { value: 'order' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Nộp' }))
-    await screen.findByText('✅ Qua giai đoạn 2/3!')
-    expect(s.calls.find((c) => c.key === POST)!.body).toEqual({ answers: [{ word: 'order', choice: 'order' }] })
-  })
-
-  it('giai đoạn 3: điền vào câu; đạt → nút bắt đầu bài học gọi onPassed', async () => {
-    server({
-      [GET]: { body: { status: st(3, 2), questions: [{ word: 'order', kind: 'cloze', prompt: 'I would like to _____ a pizza.', hint: 'gọi món' }] } },
-      [POST]: { body: res(3, { passed: true, cleared: true, results: [{ word: 'order', meaning: 'gọi món', correct: true }] }) },
-    })
-    const onPassed = vi.fn()
-    render(<VocabReview sessionId={7} onPassed={onPassed} />)
-    expect((await screen.findByTestId('review-prompt')).textContent).toBe('I would like to _____ a pizza.')
-    expect(screen.getByText('Gõ từ còn thiếu trong câu')).toBeTruthy()
-    expect(screen.getByText('Gợi ý: gọi món')).toBeTruthy() // gợi ý tiếng Việt, không có chữ cái đầu
-    fireEvent.change(screen.getByLabelText('Đáp án'), { target: { value: 'order' } })
-    fireEvent.submit(screen.getByLabelText('Đáp án').closest('form')!)
-    expect(await screen.findByText('✅ Đạt 100% cả 3 giai đoạn!')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Bắt đầu bài học' }))
-    await waitFor(() => expect(onPassed).toHaveBeenCalledTimes(1))
-  })
-})
-
-describe('VocabReview — xem lại từ đầy đủ', () => {
-  const STUDY = [
-    { word: 'order', pos: 'verb', meaning: 'gọi món', example: 'I would like to order a pizza.' },
-    { word: 'menu', meaning: 'thực đơn' },
-  ]
-
-  it('giai đoạn 1: hiện màn hình xem lại (từ, loại từ, nghĩa, câu ví dụ) trước khi làm bài', async () => {
-    server({ [GET]: { body: { status: st(1), questions: MCQ, study: STUDY } } })
-    render(<VocabReview sessionId={7} onPassed={() => {}} />)
-    expect(await screen.findByText('Xem lại từ vựng bài trước')).toBeTruthy()
-    expect(screen.getByText('(verb)')).toBeTruthy()
-    expect(screen.getByText('— gọi món')).toBeTruthy()
-    expect(screen.getByText('I would like to order a pizza.')).toBeTruthy()
-    expect(screen.queryByTestId('review-prompt')).toBeNull() // chưa vào câu hỏi
-    fireEvent.click(screen.getByRole('button', { name: 'Bắt đầu làm bài' }))
-    expect((await screen.findByTestId('review-prompt')).textContent).toBe('order')
-  })
-
-  it('giai đoạn 2, 3: vào thẳng câu hỏi (không lộ câu ví dụ trước khi làm)', async () => {
-    server({ [GET]: { body: { status: st(3, 2), questions: [{ word: 'order', kind: 'cloze', prompt: 'I would like to _____ a pizza.', hint: 'gọi món' }], study: STUDY } } })
-    render(<VocabReview sessionId={7} onPassed={() => {}} />)
-    expect((await screen.findByTestId('review-prompt')).textContent).toBe('I would like to _____ a pizza.')
-    expect(screen.queryByText('Xem lại từ vựng bài trước')).toBeNull()
-  })
-
-  it('kết quả mỗi lượt hiện đầy đủ từ, loại từ, nghĩa, câu ví dụ và đúng/sai', async () => {
-    server({
-      [GET]: { body: { status: st(2, 1), questions: [{ word: 'order', kind: 'type', prompt: 'gọi món' }], study: STUDY } },
-      [POST]: { body: res(2, { results: [{ ...STUDY[0], correct: false }] }) },
-    })
-    render(<VocabReview sessionId={7} onPassed={() => {}} />)
-    fireEvent.change(await screen.findByLabelText('Đáp án'), { target: { value: 'x' } })
-    fireEvent.submit(screen.getByLabelText('Đáp án').closest('form')!)
-    expect(await screen.findByText('(verb)')).toBeTruthy()
-    expect(screen.getByText('I would like to order a pizza.')).toBeTruthy()
-    expect(screen.getByText('— gọi món')).toBeTruthy()
-  })
-})
+const CHECK = POST + '/check'
+const WORD = { word: 'order', meaning: 'meaning', correct: true }
+const QUESTION = { word: 'order', kind: 'type', prompt: 'meaning' }
+const checkAnswer = async () => {
+ fireEvent.change(await screen.findByLabelText('\u0110\u00e1p \u00e1n'), { target: { value: 'order' } })
+ fireEvent.submit(screen.getByLabelText('\u0110\u00e1p \u00e1n').closest('form')!)
+ await screen.findByRole('button', { name: 'Ho\u00e0n th\u00e0nh l\u01b0\u1ee3t' })
+}
+describe('mixed vocabulary review', () => {
+ it('asks before revealing the answer, checks on the server, and saves only when finishing',async()=>{
+  const calls=server({[GET]:{body:{status:st(1),questions:[QUESTION],study:[]}},[CHECK]:{body:{results:[WORD]}},[POST]:{body:res(1,{passed:true,cleared:true,results:[WORD]})}}).calls
+  const done=vi.fn();render(<VocabReview sessionId={7} onPassed={done}/>);
+  await screen.findByLabelText('\u0110\u00e1p \u00e1n');expect(screen.queryByText('order')).toBeNull();
+  await checkAnswer();expect(calls.filter(c=>c.key===POST)).toHaveLength(0);
+  fireEvent.click(screen.getByRole('button',{name:'Ho\u00e0n th\u00e0nh l\u01b0\u1ee3t'}));
+  fireEvent.click(await screen.findByRole('button',{name:'B\u1eaft \u0111\u1ea7u b\u00e0i h\u1ecdc'}));
+  expect(done).toHaveBeenCalledTimes(1);
+  expect(calls.find(c=>c.key===POST)!.body).toEqual({answers:[{word:'order',choice:'order'}]});
+ });
+ it('loads only the remaining wrong words for a retry',async()=>{
+  const wrong={...WORD,correct:false};
+  const calls=server({[GET]:[{body:{status:st(1),questions:[QUESTION]}},{body:{status:st(1,1),questions:[QUESTION]}}],[CHECK]:{body:{results:[wrong]}},[POST]:{body:res(1,{results:[wrong]})}}).calls;
+  render(<VocabReview sessionId={7} onPassed={()=>{}}/>);await checkAnswer();
+  fireEvent.click(screen.getByRole('button',{name:'Ho\u00e0n th\u00e0nh l\u01b0\u1ee3t'}));
+  fireEvent.click(await screen.findByRole('button',{name:/1 t\u1eeb sai/}));
+  await screen.findByLabelText('\u0110\u00e1p \u00e1n');expect(calls.filter(c=>c.key===GET)).toHaveLength(2);
+ });
+ it('can continue after a retry even when some words still need review',async()=>{
+  const wrong={...WORD,correct:false};
+  server({[GET]:{body:{status:st(1,1),questions:[QUESTION]}},[CHECK]:{body:{results:[wrong]}},[POST]:{body:res(1,{passed:true,results:[wrong]})}});
+  const done=vi.fn();render(<VocabReview sessionId={7} onPassed={done}/>);await checkAnswer();
+  fireEvent.click(screen.getByRole('button',{name:'Ho\u00e0n th\u00e0nh l\u01b0\u1ee3t'}));
+  expect(await screen.findByText(/gi\u1eef l\u1ea1i trong l\u1ecbch \u00f4n/)).toBeTruthy();
+  fireEvent.click(screen.getByRole('button',{name:'B\u1eaft \u0111\u1ea7u b\u00e0i h\u1ecdc'}));expect(done).toHaveBeenCalled();
+ });
+ it('keeps the current question when checking fails',async()=>{
+  server({[GET]:{body:{status:st(1),questions:[QUESTION]}},[CHECK]:{status:500,body:{message:'check failed'}}});
+  render(<VocabReview sessionId={7} onPassed={()=>{}}/>);
+  fireEvent.change(await screen.findByLabelText('\u0110\u00e1p \u00e1n'),{target:{value:'order'}});
+  fireEvent.submit(screen.getByLabelText('\u0110\u00e1p \u00e1n').closest('form')!);
+  expect(await screen.findByText('check failed')).toBeTruthy();expect(screen.getByTestId('review-prompt').textContent).toBe('meaning');
+ });
+});

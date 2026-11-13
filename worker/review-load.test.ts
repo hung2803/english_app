@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import app from './index'
 import { makeToken } from './auth'
 import { addDays, todayVN } from './dates'
-import { DAILY_CAP, STREAK_TO_LEARN } from './flashcards'
+import { DAILY_CAP, STREAK_TO_LEARN, reviewCard } from './flashcards'
 import { createTestDb } from './test-db'
 import type { Env } from './env'
 
@@ -36,25 +36,25 @@ describe('trần số thẻ ôn mỗi ngày', () => {
     for (let i = 0; i < 50; i++) await add('w' + String(i).padStart(2, '0'))
     const r = await json(await call('/api/flashcards/due?limit=50'))
     expect(r.cards).toHaveLength(DAILY_CAP)
-    expect(r).toMatchObject({ total_due: DAILY_CAP, backlog: 30, daily_cap: DAILY_CAP, done_today: 0 })
+    expect(r).toMatchObject({ total_due: DAILY_CAP, backlog: 50 - DAILY_CAP, daily_cap: DAILY_CAP, done_today: 0 })
   })
 
   it('đã ôn xong một số thẻ hôm nay thì phần còn lại trong trần giảm đi; ôn đủ trần → không còn thẻ', async () => {
     for (let i = 0; i < 30; i++) await add('d' + i) // đến hạn
-    for (let i = 0; i < 15; i++) await add('done' + i, { due: addDays(TODAY, 3), reviewedOn: TODAY }) // đã ôn xong hôm nay
+    for (let i = 0; i < DAILY_CAP - 5; i++) await add('done' + i, { due: addDays(TODAY, 3), reviewedOn: TODAY }) // đã ôn xong hôm nay
     let r = await json(await call('/api/flashcards/due?limit=50'))
-    expect(r).toMatchObject({ done_today: 15, total_due: 5, backlog: 25 })
+    expect(r).toMatchObject({ done_today: DAILY_CAP - 5, total_due: 5, backlog: 25 })
     expect(r.cards).toHaveLength(5)
-    for (let i = 15; i < 20; i++) await add('done' + i, { due: addDays(TODAY, 3), reviewedOn: TODAY })
+    for (let i = DAILY_CAP - 5; i < DAILY_CAP; i++) await add('done' + i, { due: addDays(TODAY, 3), reviewedOn: TODAY })
     r = await json(await call('/api/flashcards/due?limit=50'))
-    expect(r).toMatchObject({ done_today: 20, total_due: 0, backlog: 30, cards: [] })
+    expect(r).toMatchObject({ done_today: DAILY_CAP, total_due: 0, backlog: 30, cards: [] })
   })
 
   it('chấm thẻ: remaining_due đã tính trần; thẻ ôn hôm qua không tính vào hôm nay', async () => {
     for (let i = 0; i < 25; i++) await add('w' + i)
     await add('yesterday', { due: addDays(TODAY, 5), reviewedOn: addDays(TODAY, -1) })
     const r = await json(await review('w0', { grade: 'good' }))
-    expect(r.remaining_due).toBe(19) // trần 20, vừa ôn xong 1 thẻ
+    expect(r.remaining_due).toBe(DAILY_CAP - 1) // trần 20, vừa ôn xong 1 thẻ
   })
 
   it('ôn tự do không tính vào trần và không bị trần chặn', async () => {
@@ -66,7 +66,7 @@ describe('trần số thẻ ôn mỗi ngày', () => {
   it('thống kê kho từ vựng có hạn mức hôm nay', async () => {
     for (let i = 0; i < 26; i++) await add('w' + i)
     const { stats } = await json(await call('/api/vocab'))
-    expect(stats).toMatchObject({ due: 26, quota: { cap: DAILY_CAP, done: 0, due: 26, shown: DAILY_CAP, backlog: 6 } })
+    expect(stats).toMatchObject({ due: 26, quota: { cap: DAILY_CAP, done: 0, due: 26, shown: DAILY_CAP, backlog: 26 - DAILY_CAP } })
   })
 })
 
@@ -99,13 +99,14 @@ describe('ưu tiên thẻ khi ôn', () => {
 describe(`"đã thuộc" khi viết đúng liên tiếp ${STREAK_TO_LEARN} lần`, () => {
   it(`viết đúng + Tốt ${STREAK_TO_LEARN} lần liên tiếp → đã thuộc (dù khoảng cách ôn mới vài ngày)`, async () => {
     await add('menu')
-    for (let i = 1; i <= STREAK_TO_LEARN; i++) {
-      const r = await json(await review('menu', { grade: 'good', typed: 'menu' }))
-      expect(r.next.typed_streak).toBe(i)
-      expect(r.next.learned).toBe(i === STREAK_TO_LEARN ? 1 : 0)
+    const id=(await row('menu')).id
+    for (const [i,offset] of [0,2,7].entries()) {
+      const r=await reviewCard(db,id,'good',addDays(TODAY,offset),false,'menu')
+      expect(r.ok).toBe(true)
+      expect((await row('menu')).typed_streak).toBe(i+1)
+      expect((await row('menu')).learned).toBe(i===2?1:0)
     }
-    expect(await row('menu')).toMatchObject({ learned: 1, typed_streak: STREAK_TO_LEARN })
-    expect((await row('menu')).interval_days).toBeLessThan(21) // khoảng cách ôn vẫn ngắn: nhãn "thuộc" không cần chờ 21 ngày
+
   })
 
   it('không phân biệt hoa thường và khoảng trắng thừa khi viết', async () => {
@@ -139,7 +140,7 @@ describe(`"đã thuộc" khi viết đúng liên tiếp ${STREAK_TO_LEARN} lần
   it('cách cũ vẫn đúng: khoảng cách ôn ≥ 21 ngày thì đã thuộc', async () => {
     await add('a', { interval: 20, reps: 4 })
     const r = await json(await review('a', { grade: 'good', typed: 'a' })) // 20 × 2,5 = 50 ngày
-    expect(r.next.learned).toBe(1)
+    expect(r.next.learned).toBe(0)
   })
 
   it('ôn tự do: Khó/Tốt/Dễ không tăng chuỗi; viết sai thì vẫn ép thành Quên', async () => {

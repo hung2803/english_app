@@ -30,9 +30,8 @@ const box = () => screen.getByLabelText('Viết lại từ tiếng Anh') as HTML
 describe('Flashcards — bước viết lại từ sau khi hiện nghĩa', () => {
   it('hiện nghĩa → ẩn từ tiếng Anh (không lộ đáp án), có ô viết lại từ', async () => {
     server(ROUTES)
-    render(<Flashcards />)
-    expect((await screen.findByTestId('card-word')).textContent).toBe('order')
-    fireEvent.click(screen.getByRole('button', { name: 'Hiện nghĩa' }))
+    render(<Flashcards style="type" />)
+    expect((await screen.findByTestId('card-meaning')).textContent).toBeTruthy()
     expect(screen.queryByTestId('card-word')).toBeNull() // từ tiếng Anh bị ẩn
     expect(screen.queryByText('I order tea.')).toBeNull() // câu ví dụ chứa từ cũng ẩn
     expect(screen.queryByRole('button', { name: 'Nghe phát âm: order' })).toBeNull()
@@ -43,9 +42,8 @@ describe('Flashcards — bước viết lại từ sau khi hiện nghĩa', () =>
 
   it('viết đúng (không phân biệt hoa thường, khoảng trắng thừa) → báo đúng, hé lộ từ + ví dụ, đủ 4 mức nhớ', async () => {
     server(ROUTES)
-    render(<Flashcards />)
-    await screen.findByTestId('card-word')
-    fireEvent.click(screen.getByRole('button', { name: 'Hiện nghĩa' }))
+    render(<Flashcards style="type" />)
+    await screen.findByTestId('card-meaning')
     fireEvent.change(box(), { target: { value: '  ORDER ' } })
     fireEvent.click(screen.getByRole('button', { name: 'Kiểm tra' }))
     expect(screen.getByText('✅ Đúng rồi!')).toBeTruthy()
@@ -56,9 +54,8 @@ describe('Flashcards — bước viết lại từ sau khi hiện nghĩa', () =>
 
   it('viết sai → chỉ còn nút Quên (tính là Quên, thẻ quay lại cuối hàng), hiện từ đúng', async () => {
     const s = server(ROUTES)
-    render(<Flashcards />)
-    await screen.findByTestId('card-word')
-    fireEvent.click(screen.getByRole('button', { name: 'Hiện nghĩa' }))
+    render(<Flashcards style="type" />)
+    await screen.findByTestId('card-meaning')
     fireEvent.change(box(), { target: { value: 'ordr' } })
     fireEvent.click(screen.getByRole('button', { name: 'Kiểm tra' }))
     expect(screen.getByText(/Chưa đúng — bạn viết: ordr/)).toBeTruthy()
@@ -67,15 +64,14 @@ describe('Flashcards — bước viết lại từ sau khi hiện nghĩa', () =>
     fireEvent.click(screen.getByRole('button', { name: 'Quên' }))
     await waitFor(() => expect(s.calls.some((c) => c.key === 'POST /flashcards/1/review')).toBe(true))
     expect(s.calls.find((c) => c.key === 'POST /flashcards/1/review')!.body).toEqual({ grade: 'again', typed: 'ordr' }) // gửi cả chữ đã viết để máy chủ tự kiểm
-    await waitFor(() => expect(screen.getByTestId('card-word').textContent).toBe('menu'))
+    await waitFor(() => expect(screen.getByTestId('card-meaning').textContent).toBe('th\u1ef1c \u0111\u01a1n'))
     expect(screen.getByText('Đã ôn 0/2')).toBeTruthy() // thẻ sai chưa tính là đã ôn
   })
 
   it('"Không nhớ": bỏ qua bước viết, tính là chưa đúng', async () => {
     server(ROUTES)
-    render(<Flashcards />)
-    await screen.findByTestId('card-word')
-    fireEvent.click(screen.getByRole('button', { name: 'Hiện nghĩa' }))
+    render(<Flashcards style="type" />)
+    await screen.findByTestId('card-meaning')
     fireEvent.click(screen.getByRole('button', { name: 'Không nhớ' }))
     expect(screen.getByText('❌ Chưa nhớ ra từ này')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Tốt' })).toBeNull()
@@ -84,20 +80,18 @@ describe('Flashcards — bước viết lại từ sau khi hiện nghĩa', () =>
 
   it('thẻ kế tiếp quay về mặt trước, ô viết được xóa sạch', async () => {
     server(ROUTES)
-    render(<Flashcards />)
-    await screen.findByTestId('card-word')
-    fireEvent.click(screen.getByRole('button', { name: 'Hiện nghĩa' }))
+    render(<Flashcards style="type" />)
+    await screen.findByTestId('card-meaning')
     fireEvent.change(box(), { target: { value: 'order' } })
     fireEvent.click(screen.getByRole('button', { name: 'Kiểm tra' }))
     fireEvent.click(screen.getByRole('button', { name: 'Tốt' }))
-    await waitFor(() => expect(screen.getByTestId('card-word').textContent).toBe('menu'))
-    fireEvent.click(screen.getByRole('button', { name: 'Hiện nghĩa' }))
+    await waitFor(() => expect(screen.getByTestId('card-meaning').textContent).toBe('th\u1ef1c \u0111\u01a1n'))
     expect(box().value).toBe('')
   })
 
   it('hết thẻ hôm nay nhưng còn thẻ vượt trần ngày: báo đã ôn đủ và số thẻ chờ ngày mai', async () => {
     server({ 'GET /flashcards/due': { cards: [], total_due: 0, backlog: 12, daily_cap: 20, done_today: 20 } })
-    render(<Flashcards />)
+    render(<Flashcards style="type" />)
     expect(await screen.findByText('Bạn đã ôn đủ 20 thẻ hôm nay. Còn 12 thẻ chờ sang ngày mai.')).toBeTruthy()
   })
 })

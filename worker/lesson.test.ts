@@ -143,7 +143,7 @@ describe('buildLessonPrompt', () => {
   it('AI tự viết: yêu cầu bài đọc gốc 120–180 từ theo mức', () => {
     const p = buildLessonPrompt({ ...ctx, chosen: null }, { kind: 'ai' })
     expect(p).toContain('OWN original English reading')
-    expect(p).toContain('250-350 words')
+    expect(p).toMatch(/\d+-\d+ words; CEFR/) // độ dài bài đọc theo trình độ
     expect(p).toContain('CEFR A2')
   })
 })

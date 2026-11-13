@@ -1,18 +1,23 @@
-import { useState, type FormEvent } from 'react'
+import { Fragment, useEffect, useState, type FormEvent } from 'react'
 import { api } from '../api'
 import { Btn, Card, ErrorBox } from '../ui'
 
+export type QuizKind = 'mcq' | 'fill' | 'rewrite' | 'order' | 'error'
+
 export interface QuizQuestion {
-  type: 'mcq' | 'fill'
+  type: QuizKind
   question: string
   options?: string[]
+  /** order: các từ cho sẵn (đã xáo trộn) */
+  words?: string[]
 }
 
 export interface QuizResultItem {
   index: number
-  type: 'mcq' | 'fill'
+  type: QuizKind
   question: string
   options?: string[]
+  words?: string[]
   given: number | string | null
   correct: boolean
   answer: number | string
@@ -30,6 +35,41 @@ export interface QuizResult {
 }
 
 type Given = number | string | null
+
+/** Thời gian làm quiz gợi ý (phút). Chỉ hiển thị đồng hồ, không tự nộp bài. */
+export const QUIZ_MINUTES = 10
+
+export const KIND_LABEL: Record<QuizKind, string> = {
+  mcq: 'Trắc nghiệm',
+  fill: 'Điền vào chỗ trống',
+  rewrite: 'Viết lại câu',
+  order: 'Sắp xếp từ thành câu',
+  error: 'Tìm và sửa lỗi sai',
+}
+
+const KIND_HINT: Record<QuizKind, string> = {
+  mcq: 'Chọn một đáp án đúng.',
+  fill: 'Điền từ còn thiếu (chia động từ trong ngoặc, hoặc điền giới từ, mạo từ, từ loại phù hợp).',
+  rewrite: 'Viết lại cả câu theo yêu cầu của đề.',
+  order: 'Bấm các từ theo thứ tự để ghép thành câu hoàn chỉnh đúng ngữ pháp.',
+  error: 'Phần gạch chân có lỗi sai (thì, từ loại hoặc ngữ pháp). Gõ phần sửa lại.',
+}
+
+/** Hiện phần [[…]] trong câu hỏi dạng "tìm lỗi sai" dưới dạng chữ gạch chân. */
+export function Underlined({ text }: { text: string }) {
+  const parts = text.split(/(\[\[[^\]]+\]\])/g)
+  return (
+    <>
+      {parts.map((p, i) =>
+        p.startsWith('[[') && p.endsWith(']]') ? (
+          <u key={i} className="decoration-2 underline-offset-4">{p.slice(2, -2)}</u>
+        ) : (
+          <Fragment key={i}>{p}</Fragment>
+        ),
+      )}
+    </>
+  )
+}
 
 const givenText = (it: QuizResultItem) => {
   if (it.given === null || it.given === '') return null
@@ -68,13 +108,15 @@ export function QuizResultView({ result, retried }: { result: QuizResult; retrie
           const mine = givenText(it)
           return (
             <li key={it.index} className={`rounded-xl border p-3 text-sm ${it.correct ? 'border-emerald-200 bg-emerald-50' : 'border-rose-200 bg-rose-50'}`} data-correct={it.correct}>
+              <p className="text-xs text-slate-500">{KIND_LABEL[it.type] ?? ''}</p>
               <p className="font-medium">
                 <span aria-hidden>{it.correct ? '✅' : '❌'} </span>
                 <span className="sr-only">{it.correct ? 'Đúng. ' : 'Sai. '}</span>
-                {it.index + 1}. {it.question}
+                {it.index + 1}. <Underlined text={it.question} />
               </p>
+              {it.type === 'order' && it.words && <p className="mt-1 text-slate-500">Các từ cho sẵn: {it.words.join(' / ')}</p>}
               <p className="mt-1 text-slate-700">
-                Bạn chọn: <strong>{mine ?? '(bỏ trống)'}</strong>
+                {it.type === 'mcq' ? 'Bạn chọn' : 'Bạn viết'}: <strong>{mine ?? '(bỏ trống)'}</strong>
               </p>
               {!it.correct && (
                 <p className="text-emerald-800">
@@ -90,7 +132,65 @@ export function QuizResultView({ result, retried }: { result: QuizResult; retrie
   )
 }
 
-/** Làm quiz cuối buổi. Nộp xong là chốt (không làm lại); đáp án chỉ hiện sau khi nộp. */
+/** Câu "sắp xếp từ": bấm từ để thêm vào câu, bấm từ đã chọn để bỏ ra. Câu trả lời là các từ nối bằng dấu cách. */
+export function OrderInput({ words, label, onChange }: { words: string[]; label: string; onChange: (sentence: string) => void }) {
+  const [picked, setPicked] = useState<number[]>([])
+  const update = (next: number[]) => {
+    setPicked(next)
+    onChange(next.map((i) => words[i]).join(' '))
+  }
+  return (
+    <div className="space-y-2" role="group" aria-label={label}>
+      <p
+        className={`min-h-11 rounded-xl border border-dashed px-3 py-2 text-sm ${picked.length ? 'border-indigo-300 bg-indigo-50 font-medium text-slate-900' : 'border-slate-300 text-slate-400'}`}
+        aria-live="polite"
+        data-testid="order-sentence"
+      >
+        {picked.length ? picked.map((i) => words[i]).join(' ') : 'Bấm các từ bên dưới để ghép câu…'}
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {words.map((w, i) => {
+          const used = picked.includes(i)
+          return (
+            <button
+              key={i}
+              type="button"
+              disabled={used}
+              onClick={() => update([...picked, i])}
+              className="min-h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-800 hover:bg-indigo-50 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+            >
+              {w}
+            </button>
+          )
+        })}
+      </div>
+      {picked.length > 0 && (
+        <div className="flex gap-2">
+          <Btn variant="ghost" onClick={() => update(picked.slice(0, -1))}>Bỏ từ cuối</Btn>
+          <Btn variant="ghost" onClick={() => update([])}>Xóa hết</Btn>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Đồng hồ đếm ngược gợi ý (không tự nộp bài). */
+function Countdown({ minutes }: { minutes: number }) {
+  const [left, setLeft] = useState(minutes * 60)
+  useEffect(() => {
+    const t = setInterval(() => setLeft((s) => Math.max(0, s - 1)), 1000)
+    return () => clearInterval(t)
+  }, [])
+  const mm = String(Math.floor(left / 60)).padStart(2, '0')
+  const ss = String(left % 60).padStart(2, '0')
+  return (
+    <span className={`tabular-nums text-sm font-semibold ${left === 0 ? 'text-rose-700' : 'text-indigo-700'}`} role="timer" aria-label="Thời gian còn lại gợi ý">
+      {mm}:{ss}
+    </span>
+  )
+}
+
+/** Làm quiz cuối buổi (10 phút). Nộp xong là chốt (không làm lại); đáp án chỉ hiện sau khi nộp. */
 export default function Quiz({ sessionId, quiz, onSubmitted }: { sessionId: number; quiz: QuizQuestion[]; onSubmitted: () => void }) {
   const [answers, setAnswers] = useState<Given[]>(() => quiz.map(() => null))
   const [confirming, setConfirming] = useState(false)
@@ -107,7 +207,7 @@ export default function Quiz({ sessionId, quiz, onSubmitted }: { sessionId: numb
     setBusy(true)
     setError(null)
     try {
-      const payload = answers.map((a, i) => (quiz[i].type === 'fill' ? (typeof a === 'string' && a.trim() ? a.trim() : null) : a))
+      const payload = answers.map((a, i) => (quiz[i].type === 'mcq' ? a : typeof a === 'string' && a.trim() ? a.trim() : null))
       await api(`/sessions/${sessionId}/quiz`, { answers: payload }, { timeoutMs: 20_000 })
       onSubmitted() // tải lại buổi học: hiện kết quả
     } catch (e) {
@@ -123,16 +223,37 @@ export default function Quiz({ sessionId, quiz, onSubmitted }: { sessionId: numb
     void submit()
   }
 
+  const text = (i: number, max: number, placeholder?: string) => (
+    <input
+      type="text"
+      value={typeof answers[i] === 'string' ? (answers[i] as string) : ''}
+      onChange={(e) => set(i, e.target.value)}
+      maxLength={max}
+      autoComplete="off"
+      autoCapitalize="off"
+      autoCorrect="off"
+      spellCheck={false}
+      placeholder={placeholder}
+      aria-label={`Đáp án câu ${i + 1}`}
+      className="min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+    />
+  )
+
   return (
     <Card>
-      <form onSubmit={onSubmit} className="space-y-4" aria-label="Quiz cuối buổi">
-        <div>
-          <h3 className="font-semibold">Quiz cuối buổi</h3>
-          <p className="text-xs text-slate-500">{quiz.length} câu. Nộp xong sẽ có điểm và đáp án, và không làm lại được.</p>
+      <form onSubmit={onSubmit} className="space-y-5" aria-label="Quiz cuối buổi">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="font-semibold">Quiz cuối buổi ({QUIZ_MINUTES} phút)</h3>
+            <p className="text-xs text-slate-500">{quiz.length} câu. Nộp xong sẽ có điểm và đáp án, và không làm lại được.</p>
+          </div>
+          <Countdown minutes={QUIZ_MINUTES} />
         </div>
         {quiz.map((q, i) => (
           <fieldset key={i} className="space-y-2" disabled={busy}>
-            <legend className="text-sm font-medium">{i + 1}. {q.question}</legend>
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-500" data-testid={`quiz-kind-${i}`}>{KIND_LABEL[q.type]}</p>
+            <legend className="text-sm font-medium">{i + 1}. <Underlined text={q.question} /></legend>
+            <p className="text-xs text-slate-500">{KIND_HINT[q.type]}</p>
             {q.type === 'mcq' ? (
               <div className="grid gap-2 sm:grid-cols-2">
                 {q.options?.map((o, j) => (
@@ -142,18 +263,14 @@ export default function Quiz({ sessionId, quiz, onSubmitted }: { sessionId: numb
                   </label>
                 ))}
               </div>
+            ) : q.type === 'order' ? (
+              <OrderInput words={q.words ?? []} label={`Sắp xếp câu ${i + 1}`} onChange={(s) => set(i, s)} />
+            ) : q.type === 'rewrite' ? (
+              text(i, 200)
+            ) : q.type === 'error' ? (
+              text(i, 200, 'Phần sửa lại…')
             ) : (
-              <input
-                type="text"
-                value={typeof answers[i] === 'string' ? (answers[i] as string) : ''}
-                onChange={(e) => set(i, e.target.value)}
-                maxLength={60}
-                autoComplete="off"
-                autoCapitalize="off"
-                spellCheck={false}
-                aria-label={`Đáp án câu ${i + 1}`}
-                className="min-h-11 w-full rounded-xl border border-slate-300 px-3 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
-              />
+              text(i, 60)
             )}
           </fieldset>
         ))}

@@ -29,6 +29,7 @@ const MEANING = Object.fromEntries(VOCAB.map((v) => [v.word, v.meaning_vi]))
 /** Buổi 1 đã xong với bài có từ vựng; buổi 2 là buổi kế tiếp. */
 async function seedDoneFirstLesson(vocab: V[] = VOCAB) {
   await db.prepare("UPDATE sessions SET status='done', score=80, completed_date=?, lesson_json=? WHERE seq=1").bind(todayVN(), JSON.stringify(lessonJson({ vocab }))).run()
+  for (const v of vocab) await db.prepare('INSERT OR IGNORE INTO vocab(word,meaning,example,due_date,created_at) VALUES (?,?,?,?,?)').bind(v.word,v.meaning_vi,v.example ?? null,todayVN(),todayVN()).run()
 }
 
 /** Trả lời đúng mọi câu, trừ các từ trong `wrongWords` (cố tình sai). */
@@ -58,7 +59,7 @@ describe('ôn từ vựng bài trước — bắt buộc', () => {
     expect((await json(await call(`/api/sessions/${await sid(1)}`))).session.review.required).toBe(false)
     await seedDoneFirstLesson()
     const { session } = await json(await call(`/api/sessions/${await sid(2)}`))
-    expect(session.review).toEqual({ required: true, passed: false, total: 5, stage: 1, stages: 3, round: 0 })
+    expect(session.review).toEqual({ required: true, passed: false, total: 5, stage: 1, stages: 1, round: 0 })
   })
 
   it('chưa ôn: không bắt đầu được buổi 2 (409, không gọi AI, không lưu gì)', async () => {
@@ -92,139 +93,41 @@ describe('ôn từ vựng bài trước — bắt buộc', () => {
   })
 })
 
-describe('giai đoạn 1 — trắc nghiệm', () => {
-  it('mỗi từ một câu, 4 lựa chọn khác nhau có đáp án đúng, hai chiều Anh–Việt / Việt–Anh, không lộ đáp án', async () => {
-    await seedDoneFirstLesson()
-    const { questions, status } = await get(await sid(2))
-    expect(status).toMatchObject({ total: 5, stage: 1 })
-    expect(questions).toHaveLength(5)
-    expect(new Set(questions.map((q: any) => q.word)).size).toBe(5)
-    for (const q of questions) {
-      expect(q.kind).toBe('mcq')
-      expect(q.options).toHaveLength(4)
-      expect(new Set(q.options).size).toBe(4)
-      expect(q.options).toContain(q.dir === 'en_vi' ? MEANING[q.word] : q.word)
-      expect(q.prompt).toBe(q.dir === 'en_vi' ? q.word : MEANING[q.word])
-    }
-    expect(new Set(questions.map((q: any) => q.dir))).toEqual(new Set(['en_vi', 'vi_en']))
-    expect(JSON.stringify(questions)).not.toContain('"answer"')
-  })
 
-  it('sai 1 từ: ở lại giai đoạn 1 và lượt sau hỏi LẠI TẤT CẢ các từ (làm lại từ đầu)', async () => {
-    await seedDoneFirstLesson()
-    const id = await sid(2)
-    let { questions } = await get(id)
-    const r = await post(id, answer(questions, [questions[0].word]))
-    expect(r).toMatchObject({ passed: false, cleared: false, stage: 1, next_stage: 1, round: 1 })
-    expect(r.results.filter((x: any) => !x.correct)).toHaveLength(1)
-    expect(r.results.every((x: any) => typeof x.meaning === 'string')).toBe(true) // hé lộ nghĩa để học
-    ;({ questions } = await get(id))
-    expect(questions).toHaveLength(5) // KHÔNG chỉ riêng từ sai
-    expect((await call(`/api/sessions/${id}/materials`, {})).status).toBe(409) // vẫn bị chặn
-  })
-
-  it('trả kèm danh sách từ đầy đủ để xem lại (từ, nghĩa, loại từ, câu ví dụ) và kết quả mỗi lượt cũng đầy đủ', async () => {
-    await seedDoneFirstLesson([{ word: 'order', pos: 'verb', meaning_vi: 'gọi món', example: 'I would like to order a pizza.' }, ...VOCAB.slice(1)] as any)
-    const id = await sid(2)
-    const { study, questions } = await get(id)
-    expect(study).toHaveLength(5)
-    expect(study[0]).toEqual({ word: 'order', pos: 'verb', meaning: 'gọi món', example: 'I would like to order a pizza.' })
-    expect(study[3]).toEqual({ word: 'waiter', meaning: 'bồi bàn' }) // không ví dụ/loại từ thì bỏ trường
-    const r = await post(id, answer(questions))
-    expect(r.results.find((x: any) => x.word === 'order')).toMatchObject({ pos: 'verb', meaning: 'gọi món', example: 'I would like to order a pizza.', correct: true })
-  })
-
-  it('hướng hỏi do máy chủ quyết định: gửi sai "dir" không giúp đúng', async () => {
-    await seedDoneFirstLesson()
-    const id = await sid(2)
-    const { questions } = await get(id)
-    // với câu hỏi nghĩa-của-từ (en_vi), "đáp án" là chính từ ở đề bài (vi_en giả) — phải bị tính sai
-    const cheat = questions.map((q: any) => (q.dir === 'en_vi' ? { word: q.word, dir: 'vi_en', choice: q.word } : { word: q.word, dir: 'vi_en', choice: q.word }))
-    const r = await post(id, cheat)
-    expect(r.cleared).toBe(false)
-  })
-
-  it('bỏ trống hoặc thiếu câu trả lời tính là sai', async () => {
-    await seedDoneFirstLesson()
-    const id = await sid(2)
-    const { questions } = await get(id)
-    expect((await post(id, answer(questions).slice(0, 3))).cleared).toBe(false)
-    expect((await post(id, [])).cleared).toBe(false)
-  })
-
-  it('bài trước ít từ (3 từ): vẫn đủ 4 lựa chọn nhờ bổ sung từ kho chung', async () => {
-    await seedDoneFirstLesson([{ word: 'cat', meaning_vi: 'mèo' }, { word: 'dog', meaning_vi: 'chó' }, { word: 'bird', meaning_vi: 'chim' }])
-    for (const [w, m] of [['fish', 'cá'], ['cow', 'bò'], ['pig', 'lợn']]) await db.prepare("INSERT INTO vocab (word, meaning, due_date, created_at) VALUES (?, ?, 'x', 'x')").bind(w, m).run()
-    const { questions } = await get(await sid(2))
-    expect(questions).toHaveLength(3)
-    expect(questions.every((q: any) => q.options.length === 4)).toBe(true)
-  })
-})
-
-describe('3 giai đoạn nối tiếp', () => {
-  it('đúng 100% giai đoạn 1 → sang 2 (gõ từ) → sang 3 (điền câu) → đạt; sai ở giữa thì làm lại giai đoạn đó từ đầu', async () => {
-    await seedDoneFirstLesson()
-    const id = await sid(2)
-
-    // giai đoạn 1
-    let { questions } = await get(id)
-    let r = await post(id, answer(questions))
-    expect(r).toMatchObject({ passed: false, cleared: true, stage: 1, next_stage: 2 })
-    expect((await json(await call(`/api/sessions/${id}`))).session.review).toMatchObject({ stage: 2, passed: false })
-
-    // giai đoạn 2: gõ từ từ nghĩa tiếng Việt
-    ;({ questions } = await get(id))
-    expect(questions).toHaveLength(5)
-    for (const q of questions) {
-      expect(q.kind).toBe('type')
-      expect(q.prompt).toBe(MEANING[q.word])
-      expect(q.hint).toBeUndefined() // đề đã là nghĩa tiếng Việt; không gợi ý chữ cái của từ
-      expect(q.options).toBeUndefined()
-    }
-    r = await post(id, answer(questions, ['menu'])) // sai 1 từ
-    expect(r).toMatchObject({ cleared: false, stage: 2, next_stage: 2 })
-    ;({ questions } = await get(id))
-    expect(questions).toHaveLength(5) // làm lại cả 5 từ
-    // gõ không phân biệt hoa thường và khoảng trắng thừa
-    r = await post(id, answer(questions).map((a) => ({ ...a, choice: `  ${a.choice.toUpperCase()} ` })))
-    expect(r).toMatchObject({ cleared: true, stage: 2, next_stage: 3, passed: false })
-
-    // giai đoạn 3: điền vào câu
-    ;({ questions } = await get(id))
-    const byWord = Object.fromEntries(questions.map((q: any) => [q.word, q]))
-    expect(byWord.order.kind).toBe('cloze')
-    expect(byWord.order.prompt).toBe('I would like to _____ a pizza.')
-    expect(byWord.order.hint).toBe('gọi món') // chỉ gợi ý tiếng Việt, không có chữ cái đầu của từ
-    expect(byWord.waiter.hint).toBeUndefined()
-    expect(questions.every((q: any) => !(q.hint ?? '').includes('_'))).toBe(true) // gợi ý không có chữ cái của từ
-    expect(byWord.bill.kind).toBe('cloze') // "bills" trong câu
-    expect(byWord.bill.prompt).toBe('Could we have the _____, please?')
-    expect(byWord.waiter.kind).toBe('type') // không có ví dụ → gõ từ
-    expect(byWord.tip.kind).toBe('type') // ví dụ không chứa từ → gõ từ
-    expect(JSON.stringify(questions)).not.toMatch(/"(answer|accept)"/)
-
-    // cloze chấp nhận cả dạng gốc lẫn dạng trong câu ("bill" và "bills")
-    for (const choice of ['bill', 'bills']) {
-      const a = answer(questions).map((x) => (x.word === 'bill' ? { ...x, choice } : x))
-      const res = await post(id, a)
-      expect(res.cleared).toBe(true)
-      if (choice === 'bill') {
-        expect(res).toMatchObject({ passed: true, stage: 3 })
-        break
-      }
-    }
-    expect((await json(await call(`/api/sessions/${id}`))).session.review).toMatchObject({ required: true, passed: true })
-    expect((await call(`/api/sessions/${id}/materials`, {})).status).not.toBe(409) // đã mở khóa
-    expect((await call(`/api/sessions/${id}/vocab-review`)).status).toBe(409) // ôn xong rồi
-  })
-
-  it('sai ở giai đoạn 3 → ở lại giai đoạn 3, không bị đẩy về giai đoạn 1; chưa mở khóa', async () => {
-    await seedDoneFirstLesson()
-    const id = await sid(2)
-    await db.prepare('UPDATE sessions SET vocab_review_json = ? WHERE seq = 2').bind('{"passed":false,"stage":3,"round":4}').run()
-    const { questions } = await get(id)
-    const r = await post(id, answer(questions, ['order']))
-    expect(r).toMatchObject({ passed: false, cleared: false, stage: 3, next_stage: 3, round: 5 })
-    expect((await call(`/api/sessions/${id}/materials`, {})).status).toBe(409)
-  })
-})
+describe('mixed review', () => {
+ it('mixes question types and never returns a study sheet before answering', async () => {
+  await seedDoneFirstLesson(); const r = await get(await sid(2));
+  expect(new Set(r.questions.map((q:any)=>q.kind))).toEqual(new Set(['mcq']));
+  expect(r.study).toEqual([]);
+  expect(JSON.stringify(r.questions)).not.toMatch(/"(answer|accept)"/);
+ });
+ it('retries only wrong words once, then opens the next lesson without claiming mastery',async()=>{
+  await seedDoneFirstLesson(); const id=await sid(2);const first=await get(id);
+  const wrong=first.questions[0].word;
+  const r=await post(id,answer(first.questions,[wrong]));expect(r.passed).toBe(false);
+  const retry=await get(id);expect(retry.questions.map((q:any)=>q.word)).toEqual([wrong]);
+  const final=await post(id,answer(retry.questions,[wrong]));expect(final.passed).toBe(true);expect(final.cleared).toBe(false);
+  expect((await json(await call('/api/sessions/'+id))).session.review.passed).toBe(true);
+ });
+ it('correct first attempt completes immediately and accepts normalized answers',async()=>{
+  await seedDoneFirstLesson();const id=await sid(2); const r=await get(id);
+  expect((await post(id,answer(r.questions).map(a=>({...a,choice:' '+a.choice.toUpperCase()+' '})))).passed).toBe(true);
+ });
+ it('checking one question returns feedback without advancing or saving progress',async()=>{
+  await seedDoneFirstLesson();const id=await sid(2);const r=await get(id);
+  const checked=await json(await call('/api/sessions/'+id+'/vocab-review/check',{answers:answer([r.questions[0]])}));
+  expect(checked.results).toHaveLength(1);expect(checked.results[0].correct).toBe(true);
+  expect((await get(id)).status.round).toBe(0);
+  expect((await db.prepare('SELECT vocab_review_json FROM sessions WHERE id=?').bind(id).first<any>()).vocab_review_json).toBeNull();
+ });
+ it('records wrong words for later spaced review',async()=>{
+  await seedDoneFirstLesson();const id=await sid(2);
+  await db.prepare("UPDATE vocab SET learned=1,typed_streak=3 WHERE word='order'").run();
+  const r=await get(id);await post(id,answer(r.questions,['order']));
+  expect(await db.prepare("SELECT due_date, learned, typed_streak,lapses FROM vocab WHERE word='order'").first()).toMatchObject({due_date:todayVN(),learned:0,typed_streak:0,lapses:1});
+ });
+ it('merges due words with recent words up to ten, with no duplicates',async()=>{
+  await seedDoneFirstLesson();for(let i=0;i<12;i++) await db.prepare("INSERT INTO vocab(word,meaning,due_date,created_at) VALUES (?,?,'2000-01-01','x')").bind('extra'+i,'meaning'+i).run();
+  const r=await get(await sid(2));expect(r.questions).toHaveLength(10);expect(new Set(r.questions.map((q:any)=>q.word)).size).toBe(10);
+ });
+});

@@ -1,4 +1,7 @@
 import { Hono, type Context } from 'hono'
+import { choiceQuestion, recallStages, submitChoice } from './flashcard-choice'
+import { MASTERY_LEVELS, type MasteryLevel } from '../shared/vocab-mastery'
+import { lessonVocabulary, selectLessonWord } from './word-selection'
 import { checkPassword, endSession, isLoggedIn, requireAuth, startSession } from './auth'
 import { todayVN } from './dates'
 import type { Env } from './env'
@@ -270,7 +273,9 @@ app.post('/api/adjustments/:id/reject', async (c) => {
 app.get('/api/sessions/:id', async (c) => {
   const s = await loadSession(c.env.DB, Number(c.req.param('id')))
   if (!s) return c.json({ error: 'not_found', message: 'Không tìm thấy buổi học.' }, 404)
-  return c.json({ session: { ...sessionView(s), exercise: await exerciseStatus(c.env.DB, s), review: await vocabReviewStatus(c.env.DB, s) } })
+  // hai kiểm tra độc lập: chạy song song để không cộng dồn thời gian chờ D1
+  const [exercise, review] = await Promise.all([exerciseStatus(c.env.DB, s), vocabReviewStatus(c.env.DB, s)])
+  return c.json({ session: { ...sessionView(s), exercise, review } })
 })
 
 const EXERCISE_ERRORS = {
@@ -283,7 +288,8 @@ const EXERCISE_ERRORS = {
 app.get('/api/sessions/:id/exercise-review', async (c) => {
   const r = await exerciseQuestions(c.env.DB, Number(c.req.param('id')))
   if (!r.ok) return c.json({ error: r.reason, message: EXERCISE_ERRORS[r.reason][1] }, EXERCISE_ERRORS[r.reason][0])
-  return c.json({ status: r.status, questions: r.questions })
+  // kèm "đầu bài": bài học của buổi trước để xem lại khi làm lại câu sai
+  return c.json({ status: r.status, questions: r.questions, material: r.material })
 })
 
 /** Nộp một lượt làm lại: { answers: [{ index, choice }] }. Chấm ở máy chủ; câu sai ở lại lượt sau, hết câu sai thì mở khóa. */
@@ -318,12 +324,19 @@ app.post('/api/sessions/:id/vocab-review', async (c) => {
   return c.json(rest)
 })
 
+app.post('/api/sessions/:id/vocab-review/check', async (c) => {
+  const body = await c.req.json<{ answers?: unknown }>().catch(() => ({ answers: undefined }))
+  const r = await submitReview(c.env.DB, Number(c.req.param('id')), body.answers, true)
+  if (!r.ok) return c.json({ error: r.reason, message: REVIEW_ERRORS[r.reason][1] }, REVIEW_ERRORS[r.reason][0])
+  return c.json({ results: r.results })
+})
+
 const START_ERRORS = {
   not_found: [404, 'Không tìm thấy buổi học.'],
   done: [409, 'Buổi học này đã xong.'],
   not_next: [409, 'Hãy học các buổi trước theo thứ tự.'],
-  exercise_required: [409, 'Hãy làm lại các câu sai của bài tập buổi trước và đạt 100% để mở bài mới.'],
-  review_required: [409, 'Hãy ôn từ vựng bài trước và đạt 100% để mở bài mới.'],
+  exercise_required: [409, 'Hãy hoàn thành một lượt sửa câu sai của buổi trước để mở bài mới.'],
+  review_required: [409, 'Hãy hoàn thành lượt ôn hỗn hợp để mở bài mới.'],
 } as const
 
 /** Bắt đầu buổi: AI tìm 2–3 tài liệu để người học chọn 1. Gọi lại trả đúng danh sách cũ. */
@@ -483,25 +496,54 @@ app.post('/api/sessions/:id/quiz', async (c) => {
 
 // ---------- Từ vựng & flashcard ----------
 /** Thẻ đến hạn ôn (mặc định 10 thẻ ≈ 5 phút), cũ nhất trước. ?limit= (tối đa 50) */
-app.get('/api/flashcards/due', async (c) => c.json(await dueCards(c.env.DB, todayVN(), Number(c.req.query('limit') ?? 0) || undefined)))
+app.get('/api/flashcards/due', async (c) => {
+  const result = await dueCards(c.env.DB, todayVN(), Number(c.req.query('limit') ?? 0) || undefined)
+  return c.json(c.req.query('adaptive') === '1' ? {...result,cards:await recallStages(c.env.DB,result.cards)} : result)
+})
+
+app.get('/api/flashcards/:id/choice', async (c) => {
+  const question = await choiceQuestion(c.env.DB,Number(c.req.param('id')))
+  return question ? c.json(question) : c.json({message:'Từ này chưa có trong lịch ôn.'},404)
+})
+app.post('/api/flashcards/:id/choice', async (c) => {
+  const body = await c.req.json<{choice?:unknown;practice?:unknown}>().catch(()=>({choice:undefined,practice:undefined}))
+  if (typeof body.choice !== 'string' || !body.choice.trim() || body.choice.length > 200) return c.json({message:'Hãy chọn một đáp án hợp lệ.'},400)
+  const result = await submitChoice(c.env.DB,Number(c.req.param('id')),body.choice,todayVN(),body.practice === true)
+  if (!result.ok) return c.json({message:result.reason === 'daily_limit' ? 'Bạn đã ôn đủ 15 từ hôm nay.' : 'Không tìm thấy từ trong lịch ôn.'},result.reason === 'daily_limit' ? 409 : 404)
+  return c.json(result)
+})
+
+app.get('/api/sessions/:id/vocabulary', async (c) => {
+  const words = await lessonVocabulary(c.env.DB, Number(c.req.param('id')))
+  if (!words) return c.json({ message: 'Chưa có bài học.' }, 404)
+  return c.json({ words })
+})
+
+app.post('/api/sessions/:id/vocabulary', async (c) => {
+  const body = await c.req.json<{ word?: unknown; selected?: unknown }>().catch(() => ({} as { word?: unknown; selected?: unknown }))
+  if (typeof body.word !== 'string' || typeof body.selected !== 'boolean') return c.json({ message: 'Lựa chọn không hợp lệ.' }, 400)
+  if (!await selectLessonWord(c.env.DB, Number(c.req.param('id')), body.word, body.selected)) return c.json({ message: 'Từ này không có trong bài học.' }, 404)
+  return c.json({ words: await lessonVocabulary(c.env.DB, Number(c.req.param('id'))) })
+})
 
 /** Ôn tự do: thẻ ngẫu nhiên BẤT KỲ (kể cả chưa đến hạn). ?scope=all|learning|learned, ?limit= */
 app.get('/api/flashcards/practice', async (c) => {
   const scope = (c.req.query('scope') ?? 'all') as PracticeScope
   if (!SCOPES.includes(scope)) return c.json({ error: 'bad_request', message: 'Phạm vi ôn không hợp lệ.' }, 400)
-  return c.json(await practiceCards(c.env.DB, scope, Number(c.req.query('limit') ?? 0) || undefined))
+  const result = await practiceCards(c.env.DB, scope, Number(c.req.query('limit') ?? 0) || undefined)
+  return c.json(c.req.query('adaptive') === '1' ? {...result,cards:await recallStages(c.env.DB,result.cards)} : result)
 })
 
 /**
- * Đánh giá một lần ôn: { grade: 'again' | 'hard' | 'good' | 'easy', practice?: boolean } → lịch ôn kế tiếp, "đã thuộc" khi khoảng cách ≥ 21 ngày.
+ * Đánh giá một lần ôn; xác nhận đã thuộc qua ít nhất 3 ngày nhớ đúng, trải qua tối thiểu 7 ngày.
  * practice = ôn tự do: chỉ "Quên" đổi lịch.
  */
 app.post('/api/flashcards/:id/review', async (c) => {
-  const body = await c.req.json<{ grade?: unknown; practice?: unknown; typed?: unknown }>().catch(() => ({ grade: undefined, practice: undefined, typed: undefined }))
+  const body = await c.req.json<{ grade?: unknown; practice?: unknown; typed?: unknown; assisted?: unknown }>().catch(() => ({ grade: undefined, practice: undefined, typed: undefined, assisted: undefined }))
   if (!isGrade(body.grade)) return c.json({ error: 'bad_request', message: 'Mức đánh giá không hợp lệ (Quên / Khó / Tốt / Dễ).' }, 400)
   const typed = typeof body.typed === 'string' ? body.typed.slice(0, 200) : undefined // chữ người học viết lại từ (nếu có): máy chủ tự so với từ, sai thì ép thành Quên
-  const r = await reviewCard(c.env.DB, Number(c.req.param('id')), body.grade, todayVN(), body.practice === true, typed)
-  if (!r.ok) return c.json({ error: 'not_found', message: 'Không tìm thấy từ vựng.' }, 404)
+  const r = await reviewCard(c.env.DB, Number(c.req.param('id')), body.grade, todayVN(), body.practice === true, typed, body.assisted === true)
+  if (!r.ok) return c.json({ error: r.reason, message: r.reason === 'daily_limit' ? 'Bạn đã ôn đủ 15 từ hôm nay. Hãy quay lại ngày mai.' : r.reason === 'not_active' ? 'Từ này chưa được đưa vào lịch học.' : 'Không tìm thấy từ vựng.' }, r.reason === 'not_found' ? 404 : 409)
   return c.json({ next: r.next, remaining_due: r.remaining_due, forced_again: r.forced_again })
 })
 
@@ -509,7 +551,12 @@ app.post('/api/flashcards/:id/review', async (c) => {
 app.get('/api/vocab', async (c) => {
   const filter = (c.req.query('filter') ?? 'all') as VocabFilter
   if (!FILTERS.includes(filter)) return c.json({ error: 'bad_request', message: 'Bộ lọc không hợp lệ.' }, 400)
-  return c.json(await listVocab(c.env.DB, todayVN(), { q: c.req.query('q') ?? '', filter, page: Number(c.req.query('page') ?? 1) }))
+  const level = c.req.query('level') as MasteryLevel | undefined
+  if (level && !MASTERY_LEVELS.includes(level)) return c.json({ error: 'bad_request', message: 'Mức độ ghi nhớ không hợp lệ.' }, 400)
+  return c.json(await listVocab(c.env.DB, todayVN(), {
+    q: c.req.query('q') ?? '', filter, page: Number(c.req.query('page') ?? 1), level,
+    order: c.req.query('order') === 'priority' ? 'priority' : undefined,
+  }))
 })
 
 // ---------- Tiến độ + lịch sử ----------

@@ -21,9 +21,11 @@ migrations_dir = "migrations"
 # binding = "FILES"
 # bucket_name = "english-app-files"
 
-[triggers]
-# Mỗi 10 phút: nhắc học (nếu đúng giờ), tạo lại đề xuất tuần khi AI lỗi, gửi lại email chưa gửi được
-crons = ["*/10 * * * *"]
+# TẠM TẮT: tài khoản Workers Free đã đủ 5 cron trigger nên đăng ký thêm sẽ báo lỗi 10072 (deploy vẫn lên nhưng lệnh báo lỗi).
+# Khi giải phóng được 1 slot hoặc nâng gói Workers Paid thì bỏ dấu # ở 3 dòng dưới rồi deploy lại.
+# Cron mỗi 10 phút dùng cho: nhắc học (nếu đúng giờ), tạo lại đề xuất tuần khi AI lỗi, gửi lại email chưa gửi được.
+# [triggers]
+# crons = ["*/10 * * * *"]
 
 [vars]
 GEMINI_MODEL = "gemini-3.5-flash-lite"

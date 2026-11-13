@@ -60,7 +60,7 @@ export async function buildProgress(db: D1Database, today: string): Promise<Prog
   }
 
   const v = await db
-    .prepare('SELECT COUNT(*) AS total, COALESCE(SUM(learned), 0) AS learned, COALESCE(SUM(due_date <= ?), 0) AS due FROM vocab')
+    .prepare("SELECT COUNT(*) AS total, COALESCE(SUM(learned), 0) AS learned, COALESCE(SUM(learning_state = 'active' AND due_date <= ?), 0) AS due FROM vocab WHERE learning_state != 'available'")
     .bind(today)
     .first<{ total: number; learned: number; due: number }>()
   const vocab = { total: v?.total ?? 0, learned: v?.learned ?? 0, due: v?.due ?? 0, learned_percent: pct(v?.learned ?? 0, v?.total ?? 0) }

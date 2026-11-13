@@ -51,6 +51,8 @@ export const readingText = (l: Pick<Lesson, 'excerpt' | 'reading'>) => [l.readin
 export const readingWords = (l: Pick<Lesson, 'excerpt' | 'reading'>) => (readingText(l).match(/\S+/g) ?? []).length
 
 export function isGrounded(q: QuizItem, reading: Set<string>, all: Set<string>): boolean {
+  // viết lại câu / sắp xếp từ / tìm lỗi sai kiểm tra ngữ pháp bằng câu mới, không hỏi nội dung bài: không đối chiếu với bài đọc
+  if (q.type === 'rewrite' || q.type === 'order' || q.type === 'error') return true
   const answer = q.type === 'mcq' ? (q.options?.[q.answer as number] ?? '') : String(q.answer)
   if (/[^\x00-\x7F]/.test(answer)) return true // đáp án tiếng Việt (nghĩa của từ…): không kiểm tra được bằng chữ, giữ lại
   const need = contentTokens(answer)

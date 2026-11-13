@@ -186,7 +186,7 @@ describe('normalizeLesson có quiz', () => {
 describe('đề bài gửi AI yêu cầu quiz', () => {
   it('nêu đủ: 8 câu, 5 trắc nghiệm, 3 điền từ, đáp án là chỉ số, đúng một chỗ trống, giải thích tiếng Việt, theo nội dung bài', () => {
     const p = buildLessonPrompt({ level: 'A2', topic: 'Travel', chosen: null }, { kind: 'ai' })
-    for (const w of ['exactly 8 items', '5 "mcq" and 3 "fill"', 'zero-based index', 'exactly one "___" blank', 'max 3 words', 'answerable from this lesson', 'explanation_vi', 'Vietnamese', '"quiz"']) expect(p).toContain(w)
+    for (const w of ['exactly 8 items', '2 "mcq", 2 "fill", 1 "rewrite", 2 "order", 1 "error"', 'zero-based index', 'exactly one "___" blank', 'max 3 words', 'answerable from this lesson', 'explanation_vi', 'Vietnamese', '"quiz"']) expect(p).toContain(w)
     expect(p).toContain('suited to A2')
   })
 })

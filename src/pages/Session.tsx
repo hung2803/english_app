@@ -1,8 +1,9 @@
-﻿import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../api'
 import AiStep from '../components/AiStep'
 import Chat from '../components/Chat'
+import LessonSteps, { type LessonData } from '../components/LessonSteps'
 import Quiz, { QuizResultView, type QuizQuestion, type QuizResult } from '../components/Quiz'
 import Flashcards from '../components/Flashcards'
 import ExerciseReview from '../components/ExerciseReview'
@@ -11,20 +12,7 @@ import { Btn, Card, ErrorBox, PageTitle, Speak, Spinner, fmtDate } from '../ui'
 
 interface Option { type: 'article' | 'youtube' | 'podcast' | 'upload'; upload_id?: number; title: string; url: string; why_vi: string; excerpt: string }
 interface Material { options: Option[]; chosen: number | null; fallback: boolean; fallback_reason?: 'no_results' | 'search_error' }
-interface Lesson {
-  title: string
-  source: { type: string; url?: string; upload_id?: number; title: string; ai_written: boolean }
-  excerpt: string
-  reading?: string
-  goals_vi?: string[]
-  task?: { en: string; vi: string }
-  summary_vi: string
-  explanation_vi: string
-  vocab: { word: string; pos?: string; meaning_vi: string; example?: string }[]
-  grammar: { point: string; explanation_vi: string; example?: string }[]
-  quiz?: QuizQuestion[]
-  notice_vi?: string
-}
+type Lesson = LessonData & { quiz?: QuizQuestion[] }
 interface SessionData {
   id: number
   seq: number
@@ -36,7 +24,7 @@ interface SessionData {
   material: Material | null
   lesson: Lesson | null
   result?: QuizResult | null
-  /** ôn từ vựng bài trước: required && !passed → phải ôn xong (đúng 100%) mới bắt đầu buổi này */
+  /** Hoàn thành lượt hỗn hợp và một lượt thử lại từ sai trước khi bắt đầu. */
   review?: { required: boolean; passed: boolean; total: number; stage: number; stages: number; round: number }
   /** bài tập buổi trước chưa đạt 100%: required → phải làm lại các câu sai trước (rồi mới tới phần ôn từ vựng) */
   exercise?: { required: boolean; prev_seq: number | null; remaining: number; round: number }
@@ -85,89 +73,6 @@ function ChooseStep({ material, sessionId, onDone }: { material: Material; sessi
         <OptionCard key={`${o.type}-${o.upload_id ?? o.url}`} o={o} busy={busy} onChoose={() => choose(i)} />
       ))}
       {error != null && <ErrorBox error={error} />}
-    </div>
-  )
-}
-
-function LessonView({ l }: { l: Lesson }) {
-  return (
-    <div className="space-y-3">
-      {l.source.ai_written && (
-        <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-          ✍️ <strong>Bài đọc do AI viết.</strong> {l.notice_vi}
-        </div>
-      )}
-      <Card>
-        <h2 className="text-lg font-semibold">{l.title}</h2>
-        {l.source.url ? (
-          <a href={l.source.url} target="_blank" rel="noreferrer noopener" className="text-sm text-indigo-700 underline">Nguồn: {l.source.title} ↗</a>
-        ) : (
-          <p className="text-sm text-slate-500">{l.source.title}</p>
-        )}
-        {l.goals_vi && l.goals_vi.length > 0 && (
-          <div className="mt-3 rounded-lg bg-indigo-50 p-3 text-sm text-indigo-900">
-            <p className="font-semibold">Mục tiêu buổi học (~30 phút)</p>
-            <ul className="mt-1 list-disc space-y-0.5 pl-5">{l.goals_vi.map((g) => <li key={g}>{g}</li>)}</ul>
-            <p className="mt-2 text-xs text-indigo-800">Các bước: 1) Đọc bài ~8 phút · 2) Từ vựng và ngữ pháp ~8 phút · 3) Viết/nói ~6 phút · 4) Quiz ~8 phút</p>
-          </div>
-        )}
-        <h3 className="mb-1 mt-4 flex items-center gap-2 font-semibold">1. Đọc bài <Speak text={l.reading ?? l.excerpt} label="Nghe cả bài" /></h3>
-        {l.reading ? (
-          <>
-            <p className="whitespace-pre-line text-sm leading-relaxed text-slate-800">{l.reading}</p>
-            <p className="mt-3 rounded-lg bg-slate-100 p-3 text-sm italic text-slate-700">Trích từ nguồn: “{l.excerpt}”</p>
-          </>
-        ) : (
-          <p className="whitespace-pre-line rounded-lg bg-slate-100 p-3 text-sm leading-relaxed text-slate-800">{l.excerpt}</p>
-        )}
-      </Card>
-      <Card>
-        <h3 className="mb-1 font-semibold">Tóm tắt</h3>
-        <p className="text-sm text-slate-700">{l.summary_vi}</p>
-        <h3 className="mb-1 mt-3 font-semibold">Giải thích</h3>
-        <p className="text-sm text-slate-700">{l.explanation_vi}</p>
-      </Card>
-      <Card>
-        <h3 className="mb-2 font-semibold">2. Từ vựng</h3>
-        <ul className="space-y-2">
-          {l.vocab.map((v) => (
-            <li key={v.word} className="text-sm">
-              <span className="font-semibold text-indigo-700">{v.word}</span> <Speak text={v.word} />
-              {v.pos && <span className="text-slate-500"> ({v.pos})</span>} — {v.meaning_vi}
-              {v.example && (
-                <p className="flex items-center gap-2 text-slate-500">
-                  <span>{v.example}</span>
-                  <Speak text={v.example} label="Nghe câu ví dụ" />
-                </p>
-              )}
-            </li>
-          ))}
-        </ul>
-      </Card>
-      <Card>
-        <h3 className="mb-2 font-semibold">Ngữ pháp</h3>
-        <ul className="space-y-2">
-          {l.grammar.map((g) => (
-            <li key={g.point} className="text-sm">
-              <span className="font-semibold">{g.point}</span>: {g.explanation_vi}
-              {g.example && (
-                <p className="flex items-center gap-2 text-slate-500">
-                  <span>{g.example}</span>
-                  <Speak text={g.example} label="Nghe câu ví dụ" />
-                </p>
-              )}
-            </li>
-          ))}
-        </ul>
-      </Card>
-      {l.task && (
-        <Card className="space-y-1">
-          <h3 className="font-semibold">3. Viết / nói</h3>
-          <p className="text-sm text-slate-700">{l.task.vi}</p>
-          <p className="text-sm italic text-slate-600">{l.task.en}</p>
-          <p className="text-xs text-slate-500">Trả lời trong khung chat bên dưới để được sửa lỗi. Sau đó làm quiz ở bước 4.</p>
-        </Card>
-      )}
     </div>
   )
 }
@@ -236,14 +141,13 @@ export default function SessionPage() {
   if (s.lesson) {
     body = (
       <div className="space-y-3">
-        <LessonView l={s.lesson} />
-        <Chat sessionId={s.id} readOnly={s.status === 'done'} />
+        <LessonSteps l={s.lesson} sessionId={s.id} chat={<Chat sessionId={s.id} readOnly={s.status === 'done'} />} />
         {s.status === 'done' ? (
           s.result && (
             <>
               {s.quiz_mastered === 0 && (
                 <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-                  Bài tập chưa đạt 100%. Khi mở buổi kế tiếp, bạn cần làm lại các câu sai (và ôn từ vựng) rồi mới học tiếp được.
+                  Buổi kế tiếp sẽ có một lượt sửa các câu sai và ôn từ vựng. Các mục chưa nhớ được giữ lại để luyện thêm.
                 </div>
               )}
               <QuizResultView result={s.result} retried={s.first_score != null && s.score === 100 ? { finalScore: 100, firstScore: s.first_score } : undefined} />

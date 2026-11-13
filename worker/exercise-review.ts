@@ -1,11 +1,9 @@
-import { isCorrect, shuffle, type GivenAnswer, type QuizItem, type QuizResult } from './quiz'
+import { fixedSentence, isCorrect, shuffle, type GivenAnswer, type QuizItem, type QuizResult, type QuizType } from './quiz'
 import type { SessionLite } from './vocab-review'
 
 /**
- * Bài tập (quiz) của buổi trước phải đạt 100% mới mở buổi kế tiếp.
- * Nộp quiz lần đầu (buổi vẫn tính là xong, điểm gốc giữ nguyên); nếu chưa đủ 100% thì buổi kế tiếp hiện
- * phần "làm lại các câu sai". Mỗi lượt chỉ hỏi các câu còn sai (lựa chọn trắc nghiệm được xáo lại mỗi lần);
- * hết câu sai = đạt 100% và mở được buổi tiếp theo. Chấm ở máy chủ.
+ * Trước bài mới, sửa các câu sai của quiz trước một lần. Giữ riêng việc hoàn thành lượt
+ * và đạt 100%: câu vẫn sai được lưu lại, điểm chỉ thành 100 khi thực sự sửa đúng hết.
  */
 
 interface Prev {
@@ -33,9 +31,11 @@ export interface ExerciseStatus {
 
 export interface ExerciseQuestion {
   index: number
-  type: 'mcq' | 'fill'
+  type: QuizType
   question: string
   options?: string[]
+  /** order: các từ cho sẵn (xáo lại mỗi lần) */
+  words?: string[]
 }
 
 const NONE: ExerciseStatus = { required: false, prev_seq: null, remaining: 0, round: 0 }
@@ -82,6 +82,7 @@ export async function exerciseStatus(db: D1Database, info: { row: SessionLite })
   const quiz = quizOf(p)
   if (!quiz) return NONE
   const { remaining, round } = remainingOf(p, quiz)
+  if (round >= 1) return NONE
   return { required: true, prev_seq: p.seq, remaining: remaining.length, round }
 }
 
@@ -95,8 +96,38 @@ async function liteOf(db: D1Database, id: number): Promise<{ row: SessionLite } 
   return row ? { row } : null
 }
 
+/** Đầu bài: nội dung bài của buổi trước để người học xem lại khi làm lại câu sai (không chứa quiz hay đáp án). */
+export interface ExerciseMaterial {
+  seq: number
+  title: string
+  /** bài đọc người học đã thấy (bài viết lại + đoạn trích, hoặc bài AI viết) */
+  reading: string
+  summary_vi: string
+  vocab: { word: string; pos?: string; meaning_vi: string; example?: string }[]
+  grammar: { point: string; explanation_vi: string; example?: string }[]
+}
+
+function materialOf(p: Prev): ExerciseMaterial {
+  let l: Record<string, unknown> = {}
+  try {
+    l = JSON.parse(p.lesson_json ?? '{}') as Record<string, unknown>
+  } catch {
+    // bài hỏng: trả đầu bài rỗng, vẫn làm lại được
+  }
+  const s = (v: unknown) => (typeof v === 'string' ? v : '')
+  const arr = <T>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : [])
+  return {
+    seq: p.seq,
+    title: s(l.title),
+    reading: [s(l.reading), s(l.excerpt)].filter(Boolean).join('\n\n'),
+    summary_vi: s(l.summary_vi),
+    vocab: arr<ExerciseMaterial['vocab'][number]>(l.vocab),
+    grammar: arr<ExerciseMaterial['grammar'][number]>(l.grammar),
+  }
+}
+
 export type ExerciseQuestionsResult =
-  | { ok: true; status: ExerciseStatus; questions: ExerciseQuestion[] }
+  | { ok: true; status: ExerciseStatus; questions: ExerciseQuestion[]; material: ExerciseMaterial }
   | { ok: false; reason: 'not_found' | 'not_required' }
 
 export async function exerciseQuestions(db: D1Database, sessionId: number): Promise<ExerciseQuestionsResult> {
@@ -110,9 +141,9 @@ export async function exerciseQuestions(db: D1Database, sessionId: number): Prom
   const questions: ExerciseQuestion[] = remaining.map((i) => {
     const q = quiz[i]
     // xáo lại lựa chọn mỗi lần để người học phải nhớ nội dung, không nhớ vị trí
-    return { index: i, type: q.type, question: q.question, ...(q.type === 'mcq' && q.options ? { options: shuffle(q.options) } : {}) }
+    return { index: i, type: q.type, question: q.question, ...(q.type === 'mcq' && q.options ? { options: shuffle(q.options) } : {}), ...(q.words ? { words: shuffle(q.words) } : {}) }
   })
-  return { ok: true, status, questions }
+  return { ok: true, status, questions, material: materialOf(p) }
 }
 
 export interface ExerciseAnswer {
@@ -157,7 +188,7 @@ export async function submitExercise(db: D1Database, sessionId: number, answers:
       const given: GivenAnswer = q.type === 'mcq' ? (q.options ?? []).indexOf(a.choice) : a.choice
       correct = given !== -1 && isCorrect(q, given)
     }
-    return { index: i, question: q.question, correct, answer_text: q.type === 'mcq' ? (q.options?.[q.answer as number] ?? '') : String(q.answer), explanation_vi: q.explanation_vi }
+    return { index: i, question: q.question, correct, answer_text: q.type === 'mcq' ? (q.options?.[q.answer as number] ?? '') : q.type === 'error' ? fixedSentence(q) : String(q.answer), explanation_vi: q.explanation_vi }
   })
   const wrong = results.filter((r) => !r.correct).map((r) => r.index)
   const passed = wrong.length === 0
@@ -172,5 +203,6 @@ export async function submitExercise(db: D1Database, sessionId: number, answers:
     )
     .bind(JSON.stringify(next), passed ? 1 : 0, passed ? 1 : 0, passed ? 1 : 0, p.id)
     .run()
-  return { ok: true, passed, round: next.round, remaining: wrong.length, results }
+  // Hoàn thành lượt sửa là đủ mở bài mới; quiz_mastered chỉ ghi 1 khi thực sự đúng hết.
+  return { ok: true, passed: true, round: next.round, remaining: wrong.length, results }
 }

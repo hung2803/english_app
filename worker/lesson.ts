@@ -4,7 +4,7 @@ import { AiError } from './errors'
 import { geminiJson, type Part } from './gemini'
 import { isSafeUrl, readLimited, visibleText, youtubeId } from './link-check'
 import type { MaterialOption } from './materials'
-import { groundQuiz, MIN_READING_WORDS, readingWords } from './lesson-grounding'
+import { groundQuiz, readingWords } from './lesson-grounding'
 import { MIN_QUIZ, normalizeQuiz, QUIZ_SIZE, type QuizItem } from './quiz'
 import { clipWords } from './text'
 import { splitSegments, toBase64 } from './upload-material'
@@ -16,10 +16,25 @@ export interface VocabItem {
   example?: string
 }
 
+/** Một câu của bài đọc kèm bản dịch tiếng Việt (dùng cho bước Nghe: 3 lượt, bật/tắt bản dịch). */
+export interface ReadingSentence {
+  en: string
+  vi: string
+}
+
+/** Bài tập ngữ pháp tự chấm (hiện đáp án sau khi người học làm). */
+export interface GrammarExercise {
+  question: string
+  answer: string
+  explanation_vi?: string
+}
+
 export interface GrammarItem {
   point: string
   explanation_vi: string
   example?: string
+  /** vài câu ví dụ để người học chép vào vở */
+  examples?: string[]
 }
 
 export interface LessonSource {
@@ -41,6 +56,10 @@ export interface Lesson {
   reading?: string
   /** mục tiêu buổi học, tiếng Việt */
   goals_vi?: string[]
+  /** bài đọc tách từng câu kèm bản dịch (bước Nghe) */
+  sentences?: ReadingSentence[]
+  /** bài tập ngữ pháp tự chấm (bước Học ngữ pháp) */
+  grammar_practice?: GrammarExercise[]
   /** bài tập viết/nói ngắn, làm trong khung chat để được sửa lỗi */
   task?: { en: string; vi: string }
   summary_vi: string
@@ -94,37 +113,58 @@ const MAX_GRAMMAR = 3
 
 const UA = 'Mozilla/5.0 (compatible; EnglishCoach/1.0)'
 
+/** Độ dài bài đọc theo trình độ: người mới đọc bài dài sẽ không hiểu gì nên A0/A1 chỉ cần đoạn rất ngắn. */
+export function readingRange(level: string): [number, number] {
+  if (/^A[01]$/i.test(level)) return [40, 80]
+  if (/^A2$/i.test(level)) return [80, 130]
+  return [120, 200]
+}
+
 const SHAPE = `{
   "title": "lesson title in English, max 10 words",
   "excerpt": "ONE short quote (max 80 words) copied from the source that the lesson is based on",
-  "reading": "an ORIGINAL English reading text of 250-350 words at the learner's level, written in your own words about the same content (omit when you wrote the whole reading text in excerpt)",
+  "reading": "an ORIGINAL English reading text at the learner's level (see the length rule), written in your own words about the same content (omit when you wrote the whole reading text in excerpt)",
+  "sentences": [{"en":"ONE sentence of the reading text, in order","vi":"bản dịch tiếng Việt của câu đó"}],
   "goals_vi": ["2-3 mục tiêu của buổi học, mỗi mục một câu ngắn tiếng Việt, bắt đầu bằng động từ"],
-  "task": {"en": "ONE short speaking/writing task in English (2-3 sentences of output), using this lesson's vocabulary", "vi": "đề bài bằng tiếng Việt"},
+  "task": {"en": "ONE speaking/writing task: write 5 short sentences about yourself using this lesson's grammar structure", "vi": "đề bài bằng tiếng Việt"},
   "summary_vi": "tóm tắt nội dung bằng tiếng Việt, 2-4 câu",
-  "explanation_vi": "giải thích bằng tiếng Việt: ý chính, bối cảnh, mẹo hiểu bài, 5-8 câu",
+  "explanation_vi": "giải thích bằng tiếng Việt: ý chính, bối cảnh, mẹo hiểu bài, 4-6 câu",
   "vocab": [{"word":"","pos":"noun|verb|adj|adv|phrase","meaning_vi":"nghĩa tiếng Việt","example":"an English example sentence"}],
-  "grammar": [{"point":"grammar point name","explanation_vi":"giải thích ngắn bằng tiếng Việt","example":"an English example sentence"}],
+  "grammar": [{"point":"ONE grammar point name","explanation_vi":"giải thích bằng tiếng Việt: dùng khi nào, cấu trúc, lưu ý","example":"an English example sentence","examples":["2-3 short English example sentences for the learner to copy into a notebook"]}],
+  "grammar_practice": [{"question":"A sentence with exactly one ___ blank practising the grammar point","answer":"one to three words","explanation_vi":"giải thích ngắn bằng tiếng Việt"}],
   "quiz": [
     {"type":"mcq","question":"...?","options":["A","B","C","D"],"answer":0,"explanation_vi":"vì sao đáp án đúng, bằng tiếng Việt","word":"a vocab word of this lesson"},
-    {"type":"fill","question":"A sentence with exactly one ___ blank.","answer":"one to three words","explanation_vi":"giải thích bằng tiếng Việt","word":"a vocab word of this lesson"}
+    {"type":"fill","question":"She ___ (go) to school every day.","answer":"goes","explanation_vi":"giải thích bằng tiếng Việt","word":"a vocab word of this lesson"},
+    {"type":"rewrite","question":"Rewrite the sentence as a question: \"He likes coffee.\"","answer":"Does he like coffee?","accept":["Does he like coffee"],"explanation_vi":"giải thích bằng tiếng Việt"},
+    {"type":"order","question":"Put the words in the correct order to make a sentence.","words":["every","I","day","up","get","early"],"answer":"I get up early every day.","explanation_vi":"giải thích bằng tiếng Việt"},
+    {"type":"error","question":"She [[go]] to school every day.","answer":"goes","explanation_vi":"giải thích bằng tiếng Việt"}
   ]
 }`
 
 /** Mẫu JSON khi AI TỰ VIẾT bài: `excerpt` là TOÀN BỘ bài đọc (không phải trích 80 từ) và không có `reading`. */
-const SHAPE_AI = SHAPE.replace(/ {2}"excerpt": "[^\n]*\n/, '  "excerpt": "the FULL reading text you wrote (at least 150 words), every sentence the learner will read",\n').replace(/ {2}"reading": "[^\n]*\n/, '')
-const RULES = (c: ComposeContext, ai = false) => `The learner is Vietnamese, CEFR ${c.level}; week topic: "${c.topic}"; the whole session lasts 30 minutes.
-Produce 10-12 useful vocabulary items (words or phrases that actually appear in the material or your reading text, suited to ${c.level}), each with an English example sentence, and 2-3 grammar points seen in the text, each with an example.
-Write "explanation_vi" as 5-8 sentences that walk the learner through the text paragraph by paragraph.
+const SHAPE_AI = (c: ComposeContext) =>
+  SHAPE.replace(/ {2}"excerpt": "[^\n]*\n/, `  "excerpt": "the FULL reading text you wrote (${readingRange(c.level)[0]}-${readingRange(c.level)[1]} words), every sentence the learner will read",\n`).replace(/ {2}"reading": "[^\n]*\n/, '')
+
+const RULES = (c: ComposeContext, ai = false) => {
+  const [lo, hi] = readingRange(c.level)
+  return `The learner is Vietnamese, CEFR ${c.level}; week topic: "${c.topic}"; the whole session lasts 60 minutes: 10 min review + new words, 12 min ONE new grammar point with practice, 13 min listening (3 passes of the reading text), 15 min speaking and writing, then a 10 min quiz.
+The learner is a BEGINNER: keep every sentence short and simple, and use only words the learner can understand from the vocabulary list or from the Vietnamese translations.
+Reading text length: ${lo}-${hi} words (at least ${Math.floor(lo * 0.75)}). "sentences" lists the reading text sentence by sentence, in order, each with its Vietnamese translation (4-10 sentences).
+Produce 10 useful vocabulary items (words or phrases that actually appear in the material or your reading text, suited to ${c.level}), each with an English example sentence, and exactly ONE new grammar point seen in the text with 2-3 copyable examples and 4-5 "grammar_practice" exercises.
+Write "explanation_vi" as 4-6 sentences that walk the learner through the text.
 All explanations and meanings are in Vietnamese; examples are in English at the learner's level. Do not reproduce the source text beyond the short excerpt.
-Also write the end-of-lesson quiz: exactly ${QUIZ_SIZE} items, 5 "mcq" and 3 "fill"; at least 2 of the mcq check reading comprehension of the text.
+Also write the end-of-lesson quiz (10 minutes): exactly ${QUIZ_SIZE} items with these types: 2 "mcq", 2 "fill", 1 "rewrite", 2 "order", 1 "error"; at least 1 of the mcq checks reading comprehension of the text.
 - "mcq": 4 different options, "answer" is the zero-based index of the single correct option.
-- "fill": ONE sentence containing exactly one "___" blank; "answer" is one word or a short phrase (max 3 words) that clearly fits.
-- Every item must be answerable from this lesson (its vocabulary, grammar, summary or excerpt) and suited to ${c.level}; no trick questions; no two items about the same thing.
-- Questions about the text must be answerable ONLY from the reading text the learner sees (what you put in "reading" / "excerpt" in this same JSON). NEVER ask about details that are not written in that text (places, transport, times, people, numbers). Vocabulary and grammar questions may only use this lesson's own vocabulary and grammar points.
+- "fill": ONE sentence containing exactly one "___" blank; "answer" is one word or a short phrase (max 3 words). Vary the skill: put a verb in brackets to be conjugated ("She ___ (go) to school."), or a preposition, article or word class to fill in.
+- "rewrite": a sentence transformation or rewrite (statement to question or negative, change the tense, active to passive, combine sentences, etc.). The question quotes the original sentence and says how to change it; "answer" is the full rewritten sentence; put other correct versions in "accept" (up to 3).
+- "order": "words" lists 3-12 words or short chunks of ONE correct sentence in a mixed order; "answer" is the correct full sentence made only from exactly those words (keep punctuation attached to the words in "answer").
+- "error": ONE sentence with exactly one mistake in tense, word class or grammar. Wrap the underlined wrong part in double square brackets, like "She [[go]] to school."; "answer" is the corrected underlined part only (max 6 words).
+- Every item must be answerable from this lesson (its vocabulary, grammar point, summary or reading text) and suited to ${c.level}; no trick questions; no two items about the same thing.
+- Questions about the text must be answerable ONLY from the reading text the learner sees (what you put in "reading" / "excerpt" in this same JSON). NEVER ask about details that are not written in that text (places, transport, times, people, numbers). Grammar and vocabulary questions may only use this lesson's own vocabulary and grammar point.
 - "explanation_vi" explains the correct answer in Vietnamese; "word" is the related vocab word of this lesson when there is one.
 Return ONLY JSON in exactly this shape:
-${ai ? SHAPE_AI : SHAPE}`
-
+${ai ? SHAPE_AI(c) : SHAPE}`
+}
 type PromptMode =
   | { kind: 'text'; text: string }
   | { kind: 'video' }
@@ -138,23 +178,23 @@ Lessons already made from this material (choose DIFFERENT content, do not repeat
 export function buildLessonPrompt(c: ComposeContext, mode: PromptMode): string {
   const src = c.chosen
   if (mode.kind === 'upload-text' && src) {
-    return `Build a 30-minute English lesson from part ${mode.part} of ${mode.parts} of the learner's OWN material ("${src.title}"). The learner uploaded it themselves.${avoid(mode.usedTitles)}
+    return `Build a 60-minute English lesson (50 min of study + a 10 min quiz) from part ${mode.part} of ${mode.parts} of the learner's OWN material ("${src.title}"). The learner uploaded it themselves.${avoid(mode.usedTitles)}
 --- MATERIAL TEXT ---
 ${mode.text}
 --- END ---
 ${RULES(c)}`
   }
   if (mode.kind === 'upload-pdf' && src) {
-    return `Build a 30-minute English lesson from the attached PDF, which is the learner's OWN material ("${src.title}"). Pick ONE coherent section of about 1-2 pages that suits CEFR ${c.level} and the topic if possible.${avoid(mode.usedTitles)}
+    return `Build a 60-minute English lesson (50 min of study + a 10 min quiz) from the attached PDF, which is the learner's OWN material ("${src.title}"). Pick ONE coherent section of about 1-2 pages that suits CEFR ${c.level} and the topic if possible.${avoid(mode.usedTitles)}
 ${RULES(c)}`
   }
   if (mode.kind === 'text' && src) {
-    return `Build a 30-minute English lesson from this ${src.type === 'podcast' ? 'podcast transcript page' : 'web article'} ("${src.title}", ${src.url}).\n--- SOURCE TEXT ---\n${mode.text}\n--- END ---\n${RULES(c)}`
+    return `Build a 60-minute English lesson (50 min of study + a 10 min quiz) from this ${src.type === 'podcast' ? 'podcast transcript page' : 'web article'} ("${src.title}", ${src.url}).\n--- SOURCE TEXT ---\n${mode.text}\n--- END ---\n${RULES(c)}`
   }
   if (mode.kind === 'video' && src) {
-    return `Build a 30-minute English lesson from this YouTube video ("${src.title}"), using its spoken English / captions.\n${RULES(c)}`
+    return `Build a 60-minute English lesson (50 min of study + a 10 min quiz) from this YouTube video ("${src.title}"), using its spoken English / captions.\n${RULES(c)}`
   }
-  return `Write your OWN original English reading text (250-350 words, at least 150; CEFR ${c.level}) about "${c.topic}", then build the lesson on it. Put the whole reading text in "excerpt" (this one time it may be longer than 80 words) and omit "reading".\n${RULES(c, true)}`
+  return `Write your OWN original English reading text (${readingRange(c.level)[0]}-${readingRange(c.level)[1]} words; CEFR ${c.level}) about "${c.topic}", then build the lesson on it. Put the whole reading text in "excerpt" (this one time it may be longer than 80 words) and omit "reading".\n${RULES(c, true)}`
 }
 
 const str = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '')
@@ -168,6 +208,22 @@ export function normalizeLesson(raw: unknown, source: LessonSource, notice_vi?: 
   const summary_vi = str(r.summary_vi, 2000)
   const explanation_vi = str(r.explanation_vi, 3000)
   const reading = str(r.reading, MAX_AI_TEXT)
+  const sentences: ReadingSentence[] = []
+  for (const s of Array.isArray(r.sentences) ? (r.sentences as Record<string, unknown>[]) : []) {
+    const en = str(s?.en, 250)
+    const vi = str(s?.vi, 300)
+    if (en && vi) sentences.push({ en, vi })
+    if (sentences.length === 12) break
+  }
+  const grammar_practice: GrammarExercise[] = []
+  for (const g of Array.isArray(r.grammar_practice) ? (r.grammar_practice as Record<string, unknown>[]) : []) {
+    const question = str(g?.question, 250)
+    const answer = str(g?.answer, 60)
+    if (!question || !answer || (question.match(/_{2,}/g)?.length ?? 0) !== 1) continue
+    const explanation_vi = str(g.explanation_vi, 300)
+    grammar_practice.push({ question, answer, ...(explanation_vi ? { explanation_vi } : {}) })
+    if (grammar_practice.length === 5) break
+  }
   const goals_vi = (Array.isArray(r.goals_vi) ? r.goals_vi : []).map((g) => str(g, 160)).filter(Boolean).slice(0, 3)
   const t = (r.task ?? {}) as Record<string, unknown>
   const task = str(t.en, 400) && str(t.vi, 400) ? { en: str(t.en, 400), vi: str(t.vi, 400) } : undefined
@@ -187,7 +243,8 @@ export function normalizeLesson(raw: unknown, source: LessonSource, notice_vi?: 
     const point = str(g?.point, 120)
     const explanation_vi = str(g?.explanation_vi, 600)
     if (!point || !explanation_vi) continue
-    grammar.push({ point, explanation_vi, example: str(g.example, 300) || undefined })
+    const examples = (Array.isArray(g.examples) ? g.examples : []).map((x) => str(x, 200)).filter(Boolean).slice(0, 3)
+    grammar.push({ point, explanation_vi, example: str(g.example, 300) || undefined, ...(examples.length ? { examples } : {}) })
     if (grammar.length === MAX_GRAMMAR) break
   }
 
@@ -197,7 +254,7 @@ export function normalizeLesson(raw: unknown, source: LessonSource, notice_vi?: 
   const quiz = normalizeQuiz(r.quiz, vocab.map((v) => v.word))
   if (!quiz) throw new LessonQualityError('Quiz AI soạn không đủ câu hợp lệ')
   return {
-    title, source, excerpt, ...(reading && !source.ai_written ? { reading } : {}), ...(goals_vi.length ? { goals_vi } : {}), ...(task ? { task } : {}),
+    title, source, excerpt, ...(reading && !source.ai_written ? { reading } : {}), ...(sentences.length ? { sentences } : {}), ...(grammar_practice.length ? { grammar_practice } : {}), ...(goals_vi.length ? { goals_vi } : {}), ...(task ? { task } : {}),
     summary_vi, explanation_vi, vocab, grammar, quiz, ...(notice_vi ? { notice_vi } : {}) }
 }
 
@@ -296,8 +353,8 @@ async function composeOnce(env: Env, c: ComposeContext, opts: { budgetMs?: numbe
 }
 
 /** Kiểm tra bài đã soạn: bài AI viết đủ dài (lượt đầu) và quiz chỉ còn các câu bám sát bài (≥ MIN_QUIZ câu). */
-function ensureGrounded(l: Lesson, strictLength: boolean): Lesson {
-  if (strictLength && l.source.ai_written && readingWords(l) < MIN_READING_WORDS) throw new LessonQualityError('Bài đọc AI viết quá ngắn')
+function ensureGrounded(l: Lesson, strictLength: boolean, level: string): Lesson {
+  if (strictLength && l.source.ai_written && readingWords(l) < Math.floor(readingRange(level)[0] * 0.75)) throw new LessonQualityError('Bài đọc AI viết quá ngắn')
   const quiz = groundQuiz(l)
   if (quiz.length < MIN_QUIZ) throw new LessonQualityError('Quiz AI soạn không bám sát bài đọc')
   return { ...l, quiz }
@@ -312,7 +369,7 @@ export async function composeLesson(env: Env, c: ComposeContext, opts: { budgetM
   const budget = opts.budgetMs ?? COMPOSE_BUDGET_MS
   for (let attempt = 1; ; attempt++) {
     try {
-      return ensureGrounded(await composeOnce(env, c, { budgetMs: Math.max(1_000, budget - (Date.now() - t0)) }), attempt === 1)
+      return ensureGrounded(await composeOnce(env, c, { budgetMs: Math.max(1_000, budget - (Date.now() - t0)) }), attempt === 1, c.level)
     } catch (e) {
       // nội dung chưa đạt, hoặc AI trả JSON hỏng (lỗi thoáng qua): thử lại một lần. Lỗi API (429/503/khóa sai/quá hạn) thì không.
       const retryable = e instanceof LessonQualityError || (e instanceof AiError && e.kind === 'other' && /JSON/.test(e.message))

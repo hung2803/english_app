@@ -15,15 +15,23 @@ export const GEMINI_MODELS = [
 const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite'
 const isGeminiModel = (v: unknown): v is string => GEMINI_MODELS.some((m) => m.id === v)
 
+/** Nhớ lựa chọn model trong bộ nhớ của Worker một lúc để mỗi lần gọi AI không tốn thêm một vòng đi-về tới D1 (theo từng DB, nên các test không lẫn nhau). */
+const MODEL_CACHE = new WeakMap<object, { model: string; exp: number }>()
+const MODEL_CACHE_MS = 30_000
+
 /** Model đang dùng: lựa chọn của người dùng (bảng settings) > biến GEMINI_MODEL > mặc định. Lỗi đọc DB thì dùng biến môi trường. */
 export async function currentModel(env: Env): Promise<string> {
+  const hit = env.DB ? MODEL_CACHE.get(env.DB) : undefined
+  if (hit && hit.exp > Date.now()) return hit.model
+  let model = env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL
   try {
     const row = await env.DB?.prepare("SELECT value FROM settings WHERE key = 'gemini_model'").first<{ value: string }>()
-    if (row && isGeminiModel(row.value)) return row.value
+    if (row && isGeminiModel(row.value)) model = row.value
+    if (env.DB) MODEL_CACHE.set(env.DB, { model, exp: Date.now() + MODEL_CACHE_MS })
   } catch {
-    // bảng chưa có hoặc DB lỗi: dùng cấu hình mặc định
+    // bảng chưa có hoặc DB lỗi: dùng cấu hình mặc định (không nhớ lại để lần sau thử đọc lại)
   }
-  return env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL
+  return model
 }
 
 export async function modelInfo(env: Env) {
@@ -42,5 +50,6 @@ export async function modelInfo(env: Env) {
 export async function saveModel(env: Env, model: unknown): Promise<boolean> {
   if (!isGeminiModel(model)) return false
   await env.DB.prepare("INSERT INTO settings (key, value) VALUES ('gemini_model', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").bind(model).run()
+  MODEL_CACHE.set(env.DB, { model, exp: Date.now() + MODEL_CACHE_MS }) // đổi model có hiệu lực ngay
   return true
 }

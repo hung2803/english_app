@@ -106,7 +106,7 @@ export function normalizeWeeks(raw: unknown): WeekPlan[] | null {
 
 function prompt(level: Level): string {
   return `You are an English curriculum designer for a Vietnamese self-learner.
-Learner level: CEFR ${level}. Goal: basic everyday communication, balancing listening, speaking, reading and writing. Plan: ${WEEKS} weeks, 5 sessions per week, 30 minutes each; the learner should move up one CEFR band by the end.
+Learner level: CEFR ${level}. Goal: basic everyday communication, balancing listening, speaking, reading and writing. Plan: ${WEEKS} weeks, 5 sessions per week, 60 minutes each (50 min study + 10 min quiz); the learner should move up one CEFR band by the end.
 Design exactly ${WEEKS} weekly themes:
 - progress from easier to harder;
 - every theme practical for everyday life and suited to ${level};

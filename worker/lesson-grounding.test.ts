@@ -75,7 +75,7 @@ describe('prompt: mẫu JSON không mâu thuẫn với yêu cầu viết bài d�
   const ctx = { level: 'A1', topic: 'Daily routines', chosen: null } as any
   it('AI tự viết: excerpt là TOÀN BỘ bài đọc (không còn dòng \"max 80 words\" làm AI viết ngắn), không có trường reading', () => {
     const p = buildLessonPrompt(ctx, { kind: 'ai' })
-    expect(p).toContain('the FULL reading text you wrote (at least 150 words)')
+    expect(p).toContain('the FULL reading text you wrote (')
     expect(p).not.toMatch(/ONE short quote/)
     expect(p).not.toMatch(/\"reading\":/)
     expect(p).toContain('Questions about the text must be answerable ONLY from the reading text the learner sees')

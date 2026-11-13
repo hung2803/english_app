@@ -17,7 +17,6 @@ function server(routes: Record<string, unknown>) {
 }
 /** Hiện nghĩa rồi viết lại đúng từ để tới phần chấm mức nhớ. */
 const showAndType = (word: string) => {
-  fireEvent.click(screen.getByRole('button', { name: 'Hiện nghĩa' }))
   fireEvent.change(screen.getByLabelText('Viết lại từ tiếng Anh'), { target: { value: word } })
   fireEvent.click(screen.getByRole('button', { name: 'Kiểm tra' }))
 }
@@ -35,8 +34,8 @@ describe('Flashcards — ôn tự do', () => {
       'GET /flashcards/practice?scope=learned&limit=10': { cards: [CARD], total_due: 7 },
       'POST /flashcards/5/review': { next: {}, remaining_due: 0 },
     })
-    render(<Flashcards practice="learned" />)
-    await screen.findByRole('button', { name: 'Hiện nghĩa' })
+    render(<Flashcards style="type" practice="learned" />)
+    await screen.findByLabelText('Vi\u1ebft l\u1ea1i t\u1eeb ti\u1ebfng Anh')
     showAndType('later1')
     fireEvent.click(screen.getByRole('button', { name: 'Tốt' }))
     expect(await screen.findByText('✅ Xong lượt ôn!')).toBeTruthy()
@@ -48,14 +47,14 @@ describe('Flashcards — ôn tự do', () => {
 
   it('nhóm rỗng: báo chưa có từ trong nhóm', async () => {
     server({ 'GET /flashcards/practice?scope=all&limit=10': { cards: [], total_due: 0 } })
-    render(<Flashcards practice="all" />)
+    render(<Flashcards style="type" practice="all" />)
     expect(await screen.findByText('Chưa có từ nào trong nhóm này')).toBeTruthy()
   })
 
   it('ôn thường (không practice): vẫn gọi /flashcards/due và gửi body như cũ', async () => {
     const s = server({ 'GET /flashcards/due?limit=10': { cards: [CARD], total_due: 1 }, 'POST /flashcards/5/review': { next: {}, remaining_due: 0 } })
-    render(<Flashcards />)
-    await screen.findByRole('button', { name: 'Hiện nghĩa' })
+    render(<Flashcards style="type" />)
+    await screen.findByLabelText('Vi\u1ebft l\u1ea1i t\u1eeb ti\u1ebfng Anh')
     showAndType('later1')
     fireEvent.click(screen.getByRole('button', { name: 'Dễ' }))
     await waitFor(() => expect(s.calls.some((c) => c.key === 'POST /flashcards/5/review')).toBe(true))

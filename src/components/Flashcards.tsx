@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { sameRecall, shuffledRecallWords } from '../../shared/recall-answer'
+import ChoiceRecall from './ChoiceRecall'
 import { api } from '../api'
 import { Btn, Card, ErrorBox, Speak, Spinner } from '../ui'
 
 export interface FlashCard {
+  recall_stage?: 'choice' | 'type'
   id: number
   word: string
   pos: string | null
@@ -20,18 +23,18 @@ const GRADES: { grade: Grade; label: string; cls: string }[] = [
 
 /**
  * Ôn flashcard lặp lại ngắt quãng. Mỗi lượt ~10 thẻ (≈ 5 phút).
- * Bấm "Hiện nghĩa" rồi tự đánh giá Quên / Khó / Tốt / Dễ.
- * "Quên" đưa thẻ về cuối hàng để ôn lại ngay trong lượt này; 3 mức còn lại hoàn thành thẻ.
+ * Trả lời trước khi hiện từ. Từ sai hoặc dùng gợi ý chỉ được thử lại một lần trong lượt.
  */
-export type PracticeScope = 'all' | 'learning' | 'learned'
+export type PracticeScope = 'all' | 'learning' | 'learned' | 'wrong'
+export type ReviewStyle = 'mixed' | 'type' | 'listen' | 'choice'
 
 /** So khớp từ người học viết với đáp án: bỏ khoảng trắng thừa, không phân biệt hoa/thường. */
-const sameWord = (typed: string, word: string) => typed.trim().replace(/\s+/g, ' ').toLowerCase() === word.trim().replace(/\s+/g, ' ').toLowerCase()
+const sameWord = sameRecall
 
 /**
  * Ôn tự do (`practice`): thẻ ngẫu nhiên bất kỳ, kể cả chưa đến hạn. Chỉ "Quên" làm đổi lịch ôn; Khó/Tốt/Dễ giữ nguyên lịch.
  */
-export default function Flashcards({ limit = 10, onFinish, practice }: { limit?: number; onFinish?: () => void; practice?: PracticeScope }) {
+export default function Flashcards({ limit = 10, onFinish, practice, style = 'mixed' }: { limit?: number; onFinish?: () => void; practice?: PracticeScope; style?: ReviewStyle }) {
   const [queue, setQueue] = useState<FlashCard[] | null>(null)
   const [batchSize, setBatchSize] = useState(0)
   const [totalDue, setTotalDue] = useState(0)
@@ -39,8 +42,11 @@ export default function Flashcards({ limit = 10, onFinish, practice }: { limit?:
   const [backlog, setBacklog] = useState(0) // thẻ đến hạn phải chờ sang ngày sau (vượt trần mỗi ngày)
   const [cap, setCap] = useState(0)
   const [done, setDone] = useState(0)
-  // front: thấy từ tiếng Anh · typing: thấy nghĩa tiếng Việt, tự viết lại từ · result: hé lộ từ, ví dụ và chấm mức nhớ
-  const [phase, setPhase] = useState<'front' | 'typing' | 'result'>('front')
+  // Chỉ hiện đáp án sau khi người học trả lời hoặc chọn không nhớ.
+  const [phase, setPhase] = useState<'typing' | 'result'>('typing')
+  const [hinted, setHinted] = useState(false)
+  const [attempts, setAttempts] = useState<Record<number, number>>({})
+  const [deferred, setDeferred] = useState(0)
   const [typed, setTyped] = useState('')
   const [typedOk, setTypedOk] = useState<boolean | null>(null)
   const typeBox = useRef<HTMLInputElement>(null)
@@ -48,9 +54,11 @@ export default function Flashcards({ limit = 10, onFinish, practice }: { limit?:
   const [error, setError] = useState<unknown>(null)
   const [loadError, setLoadError] = useState<unknown>(null)
   const [lastGrade, setLastGrade] = useState<Grade | null>(null)
+  const wordBank = useMemo(() => shuffledRecallWords(queue?.[0]?.word ?? ''), [queue?.[0]?.id, queue?.[0]?.word])
 
   const resetCard = () => {
-    setPhase('front')
+    setPhase('typing')
+    setHinted(false)
     setTyped('')
     setTypedOk(null)
   }
@@ -58,7 +66,8 @@ export default function Flashcards({ limit = 10, onFinish, practice }: { limit?:
   const load = useCallback(() => {
     setLoadError(null)
     setQueue(null)
-    api<{ cards: FlashCard[]; total_due: number; backlog?: number; daily_cap?: number }>(practice ? `/flashcards/practice?scope=${practice}&limit=${limit}` : `/flashcards/due?limit=${limit}`)
+    const path = practice ? `/flashcards/practice?scope=${practice}&limit=${limit}` : `/flashcards/due?limit=${limit}`
+    api<{ cards: FlashCard[]; total_due: number; backlog?: number; daily_cap?: number }>(path + (style === 'mixed' ? '&adaptive=1' : ''))
       .then((r) => {
         setQueue(r.cards)
         setBatchSize(r.cards.length)
@@ -67,15 +76,31 @@ export default function Flashcards({ limit = 10, onFinish, practice }: { limit?:
         setBacklog(r.backlog ?? 0)
         setCap(r.daily_cap ?? 0)
         setDone(0)
+        setAttempts({})
+        setDeferred(0)
         resetCard()
         setError(null)
       })
       .catch(setLoadError)
-  }, [limit, practice])
+  }, [limit, practice, style])
   useEffect(load, [load])
   useEffect(() => {
     if (phase === 'typing') typeBox.current?.focus()
   }, [phase])
+
+  const advance = (g: Grade) => {
+    if (!queue?.length) return
+    const card = queue[0]
+    const retry = g === 'again' && !attempts[card.id]
+    setAttempts((a) => ({ ...a, [card.id]: (a[card.id] ?? 0) + 1 }))
+    if (g === 'again' && !retry) setDeferred((n) => n + 1)
+    setQueue(q => {
+      const rest = (q ?? []).slice(1)
+      return retry ? [...rest,card] : rest
+    })
+    if (!retry) setDone(d => d+1)
+    resetCard()
+  }
 
   const grade = async (g: Grade) => {
     if (!queue?.length || busy) return
@@ -84,13 +109,9 @@ export default function Flashcards({ limit = 10, onFinish, practice }: { limit?:
     setError(null)
     setLastGrade(g)
     try {
-      await api(`/flashcards/${card.id}/review`, practice ? { grade: g, practice: true, typed } : { grade: g, typed })
-      setQueue((q) => {
-        const rest = (q ?? []).slice(1)
-        return g === 'again' ? [...rest, card] : rest
-      })
-      if (g !== 'again') setDone((d) => d + 1)
-      resetCard()
+      const body = { grade: g, typed, ...(practice ? { practice: true } : {}), ...(hinted ? { assisted: true } : {}) }
+      await api(`/flashcards/${card.id}/review`, body)
+      advance(g)
     } catch (e) {
       setError(e) // giữ nguyên thẻ, người học bấm thử lại
     } finally {
@@ -116,6 +137,7 @@ export default function Flashcards({ limit = 10, onFinish, practice }: { limit?:
       <Card className="space-y-3 text-center">
         <p className="text-lg font-semibold">✅ Xong lượt ôn!</p>
         <p className="text-sm text-slate-600">Bạn đã ôn {done} thẻ.</p>
+        {deferred > 0 && <p className="text-sm text-amber-700">Có {deferred} từ cần ôn thêm, đã giữ lại trong lịch ôn.</p>}
         {practice ? (
           <>
             <p className="text-sm text-slate-600">Ôn tự do không đổi lịch ôn, trừ các từ bạn bấm Quên (sẽ đến hạn hôm nay).</p>
@@ -143,7 +165,22 @@ export default function Flashcards({ limit = 10, onFinish, practice }: { limit?:
   }
 
   const card = queue[0]
+  const phrase = card.word.trim().split(/\s+/).length > 1
   const pct = Math.round((done / batchSize) * 100)
+  if (style === 'choice' || (style === 'mixed' && card.recall_stage === 'choice')) {
+    return <Card className="space-y-4">
+      <p className="text-xs text-slate-500">Chọn đáp án · Đã ôn {done}/{batchSize}{attempts[card.id] ? ' · Thử lại từ sai' : ''}</p>
+      <div className="h-2 overflow-hidden rounded-full bg-slate-200" role="progressbar" aria-label="Tiến độ ôn" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}><div className="h-full bg-indigo-600" style={{width:`${pct}%`}} /></div>
+      <ChoiceRecall key={`${card.id}-${attempts[card.id] ?? 0}`} id={card.id} practice={!!practice} onDone={correct => advance(correct ? 'good' : 'again')} />
+    </Card>
+  }
+  const listening = (style === 'listen' || (style === 'mixed' && done % 3 === 2)) && typeof window !== 'undefined' && 'speechSynthesis' in window && typeof SpeechSynthesisUtterance !== 'undefined'
+  const target = card.word.trim().replace(/^[“”"(.!?]+|[“”").,!?;:]+$/g, '') || card.word
+  const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const pattern = new RegExp('\\b' + escaped + '\\b', 'gi')
+  const masked = card.example && pattern.test(card.example) ? card.example.replace(pattern, '_____') : null
+  const sentence = masked && /[a-zA-Z]/.test(masked) ? masked : null
+  const contextual = style === 'mixed' && done % 3 === 1 && sentence
   return (
     <Card className="space-y-4">
       <div>
@@ -157,19 +194,6 @@ export default function Flashcards({ limit = 10, onFinish, practice }: { limit?:
       </div>
 
       <div className="min-h-40 rounded-2xl border border-slate-200 bg-slate-50 p-5 text-center" aria-live="polite">
-        {phase === 'front' && (
-          <>
-            <div className="flex items-center justify-center gap-2">
-              <p className="text-3xl font-bold text-indigo-700" data-testid="card-word">{card.word}</p>
-              <Speak text={card.word} />
-            </div>
-            {card.pos && <p className="mt-1 text-xs text-slate-500">({card.pos})</p>}
-            <div className="mt-6">
-              <Btn onClick={() => setPhase('typing')}>Hiện nghĩa</Btn>
-            </div>
-          </>
-        )}
-
         {phase === 'typing' && (
           <form
             className="space-y-3"
@@ -179,18 +203,31 @@ export default function Flashcards({ limit = 10, onFinish, practice }: { limit?:
               setPhase('result')
             }}
           >
-            <p className="text-xs text-slate-500">Nghĩa của từ — hãy viết lại từ tiếng Anh{card.pos ? ` (${card.pos})` : ''}</p>
-            <p className="text-2xl font-semibold text-slate-900" data-testid="card-meaning">{card.meaning}</p>
+            <p className="text-xs text-slate-500">{listening ? 'Nghe và viết từ tiếng Anh' : contextual ? 'Điền từ còn thiếu trong câu' : phrase ? 'Gõ lại cụm từ / câu đã học theo nghĩa bên dưới' : 'Nhìn nghĩa, gõ từ tiếng Anh'}</p>
+            {!listening && sentence && <div className="rounded-xl bg-indigo-50 p-3 text-left text-sm text-indigo-900"><p className="mb-1 text-xs font-medium">Câu ví dụ · chỗ trống là từ đang ôn</p><p data-testid="recall-context">{sentence}</p></div>}
+            {listening ? <Speak text={card.word} label="Nghe từ cần viết" /> : <div className="space-y-1">
+              <p className="text-sm text-slate-600">{sentence ? 'Từ cần điền có nghĩa là:' : 'Bạn cần gõ tiếng Anh của:'}</p>
+              <p className="text-2xl font-semibold text-slate-900" data-testid="card-meaning">{card.meaning}</p>
+              <p className="text-xs text-slate-500">{phrase ? `Chỉ nhập phần còn thiếu gồm ${wordBank.length} từ, không chép cả câu ví dụ.` : 'Chỉ nhập một từ tiếng Anh, không chép cả câu ví dụ.'}</p>
+            </div>}
+            {phrase && <p className="text-sm text-slate-600">Cần nhập đủ <strong>{wordBank.length} từ</strong> bằng tiếng Anh. Không bắt buộc viết hoa hoặc dấu câu; hãy dùng đúng cụm đã học.</p>}
+            <Btn variant="ghost" onClick={() => setHinted(true)}>Gợi ý</Btn>
+            {hinted && (phrase ? <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
+              <p className="text-slate-700">Dùng tất cả các từ dưới đây, sắp xếp rồi gõ lại cụm / câu hoàn chỉnh:</p>
+              <div className="flex flex-wrap justify-center gap-2" aria-label="Các từ gợi ý">{wordBank.map((word,i) => <span key={i} className="rounded-lg border border-amber-200 bg-white px-2 py-1">{word}</span>)}</div>
+              <p className="text-xs text-slate-500">Đúng với gợi ý được tính là luyện có hỗ trợ, chưa cộng ngày xác nhận đã thuộc.</p>
+            </div> : <p className="text-sm text-slate-600">{card.meaning} · Bắt đầu bằng “{card.word[0]}”. Đây là lượt luyện có hỗ trợ.</p>)}
             <input
               ref={typeBox}
               value={typed}
               onChange={(e) => setTyped(e.target.value)}
               aria-label="Viết lại từ tiếng Anh"
+              placeholder={listening ? 'Gõ phần bạn vừa nghe' : phrase ? 'Gõ cụm từ / câu tiếng Anh cần ôn' : `Nhập tiếng Anh của “${card.meaning}”`}
               autoComplete="off"
               autoCapitalize="off"
               autoCorrect="off"
               spellCheck={false}
-              maxLength={100}
+              maxLength={200}
               className="min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-center outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
             />
             <div className="flex justify-center gap-2">
@@ -208,7 +245,7 @@ export default function Flashcards({ limit = 10, onFinish, practice }: { limit?:
             </div>
             {card.pos && <p className="text-xs text-slate-500">({card.pos})</p>}
             <p className={`text-sm font-semibold ${typedOk ? 'text-emerald-700' : 'text-rose-700'}`} role="status">
-              {typedOk ? '✅ Đúng rồi!' : typed.trim() ? `❌ Chưa đúng — bạn viết: ${typed.trim()}` : '❌ Chưa nhớ ra từ này'}
+              {typedOk ? hinted ? '✅ Đúng với gợi ý!' : '✅ Đúng rồi!' : typed.trim() ? `❌ Chưa đúng — bạn viết: ${typed.trim()}` : '❌ Chưa nhớ ra từ này'}
             </p>
             <p className="text-xl font-semibold text-slate-900" data-testid="card-meaning">{card.meaning}</p>
             {card.example && (
@@ -223,7 +260,12 @@ export default function Flashcards({ limit = 10, onFinish, practice }: { limit?:
 
       {phase === 'result' && (
         <div>
-          {typedOk ? (
+          {typedOk && hinted ? (
+            <div className="space-y-2 text-center">
+              <p className="text-sm text-slate-600">Đã luyện đúng với hỗ trợ. Lần ôn sau hãy thử tự nhớ; lượt này chưa cộng tiến độ đã thuộc.</p>
+              <Btn disabled={busy} onClick={() => void grade('hard')}>Tiếp tục</Btn>
+            </div>
+          ) : typedOk ? (
             <>
               <p className="mb-2 text-center text-sm text-slate-600">Bạn nhớ từ này thế nào?</p>
               <div className="grid grid-cols-4 gap-2">
@@ -242,7 +284,7 @@ export default function Flashcards({ limit = 10, onFinish, practice }: { limit?:
             </>
           ) : (
             <>
-              <p className="mb-2 text-center text-sm text-slate-600">Viết chưa đúng nên thẻ này tính là Quên và sẽ quay lại ôn ngay trong lượt.</p>
+              <p className="mb-2 text-center text-sm text-slate-600">Từ này được thử lại một lần trong lượt. Nếu vẫn chưa nhớ, từ được giữ trong lịch ôn.</p>
               <div className="grid grid-cols-1 gap-2">
                 <button
                   type="button"

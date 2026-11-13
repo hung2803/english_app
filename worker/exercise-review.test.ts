@@ -1,4 +1,4 @@
-﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import app from './index'
 import { makeToken } from './auth'
 import { todayVN } from './dates'
@@ -79,42 +79,35 @@ describe('bài tập buổi trước phải đạt 100% mới mở buổi sau', 
     expect(JSON.stringify(questions)).not.toMatch(/"answer|explanation_vi|"word"/)
   })
 
-  it('sai tiếp: ở lại, chỉ còn câu sai; đúng hết: đạt 100%, điểm gốc không đổi', async () => {
+  it('kèm "đầu bài": bài đọc, tóm tắt, từ vựng, ngữ pháp của buổi trước (không có quiz hay đáp án)', async () => {
     await finishFirst([1, 5])
-    const id = await sid(2)
-    let { questions } = await get(id)
-    let r = await post(id, answerRound(questions, [5]))
-    expect(r).toMatchObject({ passed: false, round: 1, remaining: 1 })
-    expect(await row(1)).toMatchObject({ score: 75, first_score: null, quiz_mastered: 0 }) // chưa đạt: điểm chưa đổi
-    expect(r.results.find((x: any) => x.index === 1).correct).toBe(true)
-    const bad = r.results.find((x: any) => x.index === 5)
-    expect(bad).toMatchObject({ correct: false, answer_text: QUIZ8[5].answer, explanation_vi: QUIZ8[5].explanation_vi }) // hé lộ để học
-    expect((await call(`/api/sessions/${id}/materials`, {})).status).toBe(409)
-
-    ;({ questions } = await get(id))
-    expect(questions.map((q: any) => q.index)).toEqual([5]) // chỉ câu còn sai
-    r = await post(id, answerRound(questions))
-    expect(r).toMatchObject({ passed: true, remaining: 0, round: 2 })
-    // đạt 100%: điểm hiển thị thành 100 (kể cả trong lộ trình), điểm lần nộp đầu giữ ở first_score
-    expect(await row(1)).toMatchObject({ score: 100, first_score: 75, quiz_mastered: 1 })
-    const view = await json(await call(`/api/sessions/${id - 1}`))
-    expect(view.session).toMatchObject({ score: 100, first_score: 75, quiz_mastered: 1 })
-    const plan = await json(await call('/api/plan'))
-    expect(plan.weeks[0].sessions[0].score).toBe(100)
-
-    expect((await json(await call(`/api/sessions/${id}`))).session.exercise.required).toBe(false)
-    // hết chặn bài tập; còn cổng ôn từ vựng bài trước (3 giai đoạn)
-    const after = await call(`/api/sessions/${id}/materials`, {})
-    expect(after.status).toBe(409)
-    expect((await json(after)).error).toBe('review_required')
-    expect((await call(`/api/sessions/${id}/exercise-review`)).status).toBe(409) // làm xong rồi
+    const { material } = await get(await sid(2))
+    expect(material).toMatchObject({ seq: 1, title: 'Ordering food and drinks', summary_vi: 'Bài nói về cách gọi đồ ăn thức uống.' })
+    expect(material.reading).toContain('The waiter is friendly and fast') // bài đọc người học đã thấy
+    expect(material.vocab.map((v: any) => v.word)).toEqual(['order', 'menu', 'bill', 'waiter', 'tip'])
+    expect(material.grammar[0]).toMatchObject({ point: 'Can I have ...?' })
+    expect(JSON.stringify(material)).not.toMatch(/"quiz"|"answer"|explanation_vi":"The bill|"options"/)
+  })
+  it('one correction round opens the next lesson and preserves scores when answers are still wrong', async () => {
+    await finishFirst([1,5]); const id=await sid(2);const {questions}=await get(id);
+    const r=await post(id,answerRound(questions,[5]));
+    expect(r).toMatchObject({passed:true,remaining:1,round:1});
+    expect(await row(1)).toMatchObject({score:75,first_score:null,quiz_mastered:0});
+    expect(r.results.find((x:any)=>x.index===5)).toMatchObject({correct:false,answer_text:QUIZ8[5].answer});
+    expect((await json(await call('/api/sessions/'+id))).session.exercise.required).toBe(false);
+    expect((await call('/api/sessions/'+id+'/exercise-review')).status).toBe(409);
+  })
+  it('a fully correct correction round records mastery and retains the original score',async()=>{
+    await finishFirst([1,5]);const id=await sid(2);const {questions}=await get(id);
+    expect((await post(id,answerRound(questions))).passed).toBe(true);
+    expect(await row(1)).toMatchObject({score:100,first_score:75,quiz_mastered:1});
   })
 
   it('lựa chọn lạ (không có trong đề) và bỏ trống tính là sai', async () => {
     await finishFirst([1])
     const id = await sid(2)
-    expect((await post(id, [{ index: 1, choice: 'không có trong đề' }])).passed).toBe(false)
-    expect((await post(id, [])).passed).toBe(false)
+    expect((await post(id, [{ index: 1, choice: 'unknown' }])).results[0].correct).toBe(false)
+    expect((await call('/api/sessions/'+id+'/exercise-review')).status).toBe(409)
   })
 
   it('đáp án sai kiểu → 400; buổi không bị chặn → 409; không có buổi → 404', async () => {

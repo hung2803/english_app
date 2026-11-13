@@ -47,14 +47,17 @@ export function secondsToPtMidnight(now: number): number {
 export async function usageFor(env: Env, model: string, now = Date.now()): Promise<UsageView> {
   const empty: UsageView = { rpm: 0, tpm: 0, rpd: 0, tokens_today: { prompt: 0, output: 0, total: 0 }, reset_in_s: secondsToPtMidnight(now) }
   try {
-    const minute = await env.DB.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(total_tokens), 0) AS t FROM ai_usage WHERE model = ? AND ts > ?')
-      .bind(model, now - 60_000)
-      .first<{ n: number; t: number }>()
-    const day = await env.DB.prepare(
-      'SELECT COUNT(*) AS n, COALESCE(SUM(prompt_tokens), 0) AS p, COALESCE(SUM(output_tokens), 0) AS o, COALESCE(SUM(total_tokens), 0) AS t FROM ai_usage WHERE model = ? AND day = ?',
-    )
-      .bind(model, ptDay(now))
-      .first<{ n: number; p: number; o: number; t: number }>()
+    // hai truy vấn độc lập: chạy song song để không cộng dồn thời gian chờ D1
+    const [minute, day] = await Promise.all([
+      env.DB.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(total_tokens), 0) AS t FROM ai_usage WHERE model = ? AND ts > ?')
+        .bind(model, now - 60_000)
+        .first<{ n: number; t: number }>(),
+      env.DB.prepare(
+        'SELECT COUNT(*) AS n, COALESCE(SUM(prompt_tokens), 0) AS p, COALESCE(SUM(output_tokens), 0) AS o, COALESCE(SUM(total_tokens), 0) AS t FROM ai_usage WHERE model = ? AND day = ?',
+      )
+        .bind(model, ptDay(now))
+        .first<{ n: number; p: number; o: number; t: number }>(),
+    ])
     return {
       rpm: minute?.n ?? 0,
       tpm: minute?.t ?? 0,

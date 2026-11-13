@@ -72,12 +72,16 @@ describe('Lộ trình — tạo lộ trình đầu tiên', () => {
   })
 
   it('lộ trình riêng: gửi nguyên văn bản; đếm số tuần và báo AI sẽ nối thêm', async () => {
-    const s = server({ 'GET /plan': NO_PLAN(null), 'POST /plan': { body: { source: 'custom', filled_weeks: 9 } } })
+    const s = server({
+      'GET /plan': NO_PLAN(null),
+      'POST /plan/preview': { body: { weeks: [{ topic: 'Greetings', goal_vi: 'Chào hỏi' }, { topic: 'Numbers', goal_vi: '' }, { topic: 'Food', goal_vi: '' }], to_fill: 9 } },
+      'POST /plan': { body: { source: 'custom', filled_weeks: 9 } },
+    })
     mount()
     await screen.findByLabelText('Mức bắt đầu')
     expect(screen.queryByText(/AI sẽ nối thêm/)).toBeNull()
     fireEvent.change(textarea(), { target: { value: 'Greetings | Chào hỏi\n\nNumbers\nFood' } })
-    expect(screen.getByText(/3 tuần — AI sẽ nối thêm 9 tuần/)).toBeTruthy()
+    expect(await screen.findByText(/3 tuần — AI sẽ nối thêm 9 tuần/)).toBeTruthy()
     fireEvent.click(create())
     await waitFor(() => expect(s.count('POST /plan')).toBe(1))
     expect(s.last('POST /plan')).toEqual({ level: 'A0', custom: 'Greetings | Chào hỏi\n\nNumbers\nFood' })
